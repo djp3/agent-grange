@@ -1,0 +1,3 @@
+# Only the Python files under content/ go into the image.
+*
+!content/*.py

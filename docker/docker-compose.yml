@@ -1,0 +1,45 @@
+# Build with `make up` or `make build` to capture required environment variables.
+name: agentic-grange
+
+services:
+  web:
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_BRANCH: ${GIT_BRANCH:-unknown}
+        GIT_REPO: ${GIT_REPO:-unknown}
+        GIT_DIRTY: ${GIT_DIRTY:-0}
+        GIT_PUSHED_BASE: ${GIT_PUSHED_BASE:-}
+    ports:
+      - "127.0.0.1::8080"
+    labels:
+      ai.ledgerlink.agentic-grange: agentic-grange
+    environment:
+      # needed for private repos
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+
+      # the tag the team advances to mark the current build
+      CHECK_TAG: ${CHECK_TAG:-agentic-grange-latest}
+
+      # 1 = refuse if the tag is missing or GitHub cannot be reached; 0 = warn and start
+      FRESHNESS_STRICT: ${FRESHNESS_STRICT:-1}
+
+      # 1 = skip the check entirely
+      SKIP_FRESHNESS_CHECK: ${SKIP_FRESHNESS_CHECK:-0}
+
+      # how often the running server polls the tag (ETag conditional GET: a 304 is free);
+      # stale -> 503 on every route -> unhealthy
+      RECHECK_SECONDS: ${RECHECK_SECONDS:-30}
+
+    # healthcheck.py prints why /health failed, so the reason lands in Docker's health log.
+    # Startup failures are forgiven during start_period; after that 3 misses = unhealthy.
+    healthcheck:
+      test: ["CMD", "python3", "/app/healthcheck.py"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
