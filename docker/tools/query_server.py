@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Runs on the HOST. Finds the demo container through the Docker Engine API,
-reads the host port Docker assigned to it, and queries the web server.
+"""Runs on the HOST. Fallback only: the supported way in is curl against the
+fixed port, 127.0.0.1:${GRANGE_PORT} (R8.3). Finds the grange container
+through the Docker Engine API by its label, reads its published host port,
+and queries the server.
 
 Standard library only: no docker SDK, no requests. The Engine API is plain
 HTTP over a Unix socket, so http.client with a custom connect() is enough.
 
 Usage:
-    python3 query_server.py            # GET /
-    python3 query_server.py /anything  # GET /anything
+    python3 tools/query_server.py            # GET /
+    python3 tools/query_server.py /anything  # GET /anything
 """
+from __future__ import annotations   # host Python 3.9 or later (R8.8)
+
 import http.client
 import json
 import os

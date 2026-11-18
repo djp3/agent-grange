@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-COPY content/*.py ./
+COPY content/ ./
 
 # Git metadata captured by the Makefile at build time (see entrypoint.py).
 # Declared after COPY so changing the commit does not invalidate the code layer.

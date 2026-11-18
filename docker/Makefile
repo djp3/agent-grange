@@ -32,7 +32,7 @@ GIT_DIRTY_COUNT := $(shell git status --porcelain --untracked-files=all -- . 2>/
 # No commas inside $(if ...): make would read them as argument separators.
 DIRTY_TEXT      := $(if $(filter 1,$(GIT_DIRTY)),yes: $(GIT_DIRTY_COUNT) path(s) in this directory,no)
 
-.PHONY: up build down logs ps info git-status update
+.PHONY: up build down logs ps info git-status update test test-sim test-host test-plain test-headscale
 
 # Printed before every target.
 git-status:
@@ -54,11 +54,30 @@ build: git-status   ## build the image only
 	docker compose build
 down: git-status
 	docker compose down
-logs: git-status
-	@docker compose logs --no-log-prefix grange
+logs: git-status     ## follow the grange service
+	@docker compose logs -f --no-log-prefix grange
 ps: git-status
 	@docker compose ps -a
 info: git-status    ## just the summary
 update: git-status  ## what to run when a container reports it is out of date
 	git pull --ff-only
 	$(MAKE) up
+
+# ---------------------------------------------------------------- tests (R8.8)
+# The unit tests run inside the built image, on the interpreter it ships, with
+# tests/ bind-mounted read-only and the entrypoint (freshness check) bypassed.
+IMAGE      := agent-grange:local
+TEST_RUN    = docker run --rm --entrypoint python3 \
+                -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/app \
+                -v "$(CURDIR)/tests:/tests:ro" -w /tests $(IMAGE)
+
+test: build          ## unit tests and the short simulation, inside the image
+	$(TEST_RUN) -m unittest discover -s /tests -t /tests
+test-host:           ## the same unit tests on the host interpreter; optional fast loop
+	cd content && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ../tests -t ../tests
+test-sim:            ## hour-long simulations at design size (phase 3)
+	@echo "test-sim: not built yet (plan phase 3)"; exit 1
+test-plain:          ## five granges on a plain Docker network (phase 4)
+	@echo "test-plain: not built yet (plan phase 4)"; exit 1
+test-headscale:      ## local headscale, sidecars, tag discovery (phase 6)
+	@echo "test-headscale: not built yet (plan phase 6)"; exit 1

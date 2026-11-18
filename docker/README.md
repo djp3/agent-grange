@@ -18,8 +18,10 @@ content/entrypoint.py  launch-time check: start or refuse (exit 78), then exec's
 content/server.py      runs inside the container on 0.0.0.0:8080; re-checks on a timer;
                        /, /health, /version; all routes 503 once stale
 content/healthcheck.py Docker HEALTHCHECK; prints the 503 reason into the health log
-query_server.py      runs on the host, stdlib only, discovers + queries
-.dockerignore        only content/*.py enters the build context
+content/grange/        the grange package (filled in from plan phase 1 on)
+tests/               unittest modules; `make test` runs them inside the built image
+tools/query_server.py  runs on the host, stdlib only, fallback discovery by label
+.dockerignore        only content/**/*.py enters the build context
 ```
 
 ## Run it
@@ -27,7 +29,8 @@ query_server.py      runs on the host, stdlib only, discovers + queries
 ```bash
 make up            # = docker compose up -d --build --wait, with git metadata
 make update        # = git pull --ff-only && make up: the fix when a container says it is stale
-make logs          # see the freshness-check output
+make logs          # follow the grange service's output
+make test          # unit tests inside the built image (make test-host: on the host)
 make down
 curl http://127.0.0.1:7788/health
 ```
@@ -40,7 +43,8 @@ exported as build args. An image built with plain `docker compose build` has
 ## Fallback: finding the container by label
 
 The port is fixed, so `curl` is the supported way in. `query_server.py` is
-kept as a fallback that finds the container through the Docker socket instead:
+kept as a fallback, `python3 tools/query_server.py`, that finds the container
+through the Docker socket instead:
 
 1. `query_server.py` opens the Docker Unix socket (`DOCKER_HOST`, then
    `/var/run/docker.sock`, then `~/.docker/run/docker.sock`).

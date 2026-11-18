@@ -1,3 +1,4 @@
-# Only the Python files under content/ go into the image.
+# Only the Python files under content/ (the grange package included) go into
+# the image. .env, tests/ and tools/ stay out, so no secret can be baked in.
 *
-!content/*.py
+!content/**/*.py

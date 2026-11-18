@@ -3,6 +3,8 @@ name: agent-grange
 
 services:
   grange:
+    # Named so `make test` can run the unit tests in exactly this image.
+    image: agent-grange:local
     build:
       context: .
       args:
