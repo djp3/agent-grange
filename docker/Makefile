@@ -32,9 +32,9 @@ GIT_DIRTY_COUNT := $(shell git status --porcelain --untracked-files=all -- . 2>/
 # No commas inside $(if ...): make would read them as argument separators.
 DIRTY_TEXT      := $(if $(filter 1,$(GIT_DIRTY)),yes: $(GIT_DIRTY_COUNT) path(s) in this directory,no)
 
-.PHONY: up build down logs ps query info git-status update
+.PHONY: up build down logs ps info git-status update
 
-# Printed before every target except `query`, whose stdout is JSON meant for piping.
+# Printed before every target.
 git-status:
 	@echo "---- git status: $(CURDIR) ----"
 	@echo "  repo         $(GIT_REPO)"
@@ -62,5 +62,3 @@ info: git-status    ## just the summary
 update: git-status  ## what to run when a container reports it is out of date
 	git pull --ff-only
 	$(MAKE) up
-query:              ## host-side discovery client; JSON only, no summary
-	@python3 query_server.py

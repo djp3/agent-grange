@@ -12,7 +12,8 @@ services:
         GIT_DIRTY: ${GIT_DIRTY:-0}
         GIT_PUSHED_BASE: ${GIT_PUSHED_BASE:-}
     ports:
-      - "127.0.0.1::8080"
+      # Fixed localhost port for farm and frolic (R3.3); never published beyond loopback.
+      - "127.0.0.1:${GRANGE_PORT:-7788}:8080"
     labels:
       agent-grange.service: grange
     environment:

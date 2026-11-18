@@ -1,8 +1,8 @@
-# Port discovery demo
+# agent-grange service
 
-A container runs a tiny Python JSON server on a **random** host port. A host-side
-Python script finds the container through the Docker Engine API, reads the port
-Docker assigned, and queries the server. Nothing is hardcoded except a label.
+A container runs a small Python JSON server. Compose publishes it on a fixed
+localhost port, `127.0.0.1:${GRANGE_PORT}` (default 7788), and nowhere else, so
+farm, frolic, and `curl` reach it at a known address.
 
 The container also refuses to start if the commit it was built from is older
 than the commit the `agent-grange-latest` tag points to on GitHub, and while
@@ -10,8 +10,8 @@ running it re-checks periodically: if the tag moves past it, every route answers
 503 and Docker marks it unhealthy (see "Freshness check" below).
 
 ```
-Makefile             captures git metadata and drives compose: make up / update / down / query
-docker-compose.yml   publishes 127.0.0.1::8080 (host port chosen by Docker) + label + healthcheck
+Makefile             captures git metadata and drives compose: make up / update / down / logs
+docker-compose.yml   publishes 127.0.0.1:${GRANGE_PORT:-7788} -> 8080 + label + healthcheck
 Dockerfile           python:3.12-slim; bakes GIT_* build args into ENV and OCI labels
 content/freshness.py   the tag comparison; returns a verdict, shared by entrypoint and server
 content/entrypoint.py  launch-time check: start or refuse (exit 78), then exec's the server
@@ -27,9 +27,9 @@ query_server.py      runs on the host, stdlib only, discovers + queries
 ```bash
 make up            # = docker compose up -d --build --wait, with git metadata
 make update        # = git pull --ff-only && make up: the fix when a container says it is stale
-make query         # = python3 query_server.py
 make logs          # see the freshness-check output
 make down
+curl http://127.0.0.1:7788/health
 ```
 
 Use `make`, not `docker compose` directly. Compose cannot run `git`, so the
@@ -37,20 +37,17 @@ Makefile is where the commit, branch, repo and dirty flag get captured and
 exported as build args. An image built with plain `docker compose build` has
 `unknown` metadata and will refuse to start.
 
-To see the port the hard way:
+## Fallback: finding the container by label
 
-```bash
-docker compose port grange 8080
-```
-
-## How discovery works
+The port is fixed, so `curl` is the supported way in. `query_server.py` is
+kept as a fallback that finds the container through the Docker socket instead:
 
 1. `query_server.py` opens the Docker Unix socket (`DOCKER_HOST`, then
    `/var/run/docker.sock`, then `~/.docker/run/docker.sock`).
 2. `GET /containers/json?filters={"label":["agent-grange.service=grange"],"health":["healthy"]}`
    returns only containers that carry our label **and** have passed their healthcheck.
-3. The entry's `Ports` array holds `PrivatePort: 8080 -> PublicPort: <random>`.
-   The script takes the IPv4 binding and connects to `127.0.0.1:<random>`.
+3. The entry's `Ports` array holds `PrivatePort: 8080 -> PublicPort: <port>`.
+   The script takes the IPv4 binding and connects to `127.0.0.1:<port>`.
 4. If no healthy container exists yet it polls once a second for up to 60 s
    (`DISCOVERY_TIMEOUT` overrides), printing the container's current state.
 
@@ -176,7 +173,6 @@ make down
 - Label in `docker-compose.yml` not matching `LABEL` in `query_server.py`.
 - Removing the healthcheck (the `health` filter would then never match; drop the
   filter too if you do this).
-- Caching the port across restarts: it changes every time.
-- A `restart: always` policy would turn a refusal into a crash loop. Leave it off,
-  or use `on-failure` with a small retry count.
+- Any restart policy: a refusal would become a crash loop, and the grange is
+  meant to stay down until `make up` (R8.9). Compose sets none.
 - Building with plain `docker compose` instead of `make`: metadata is `unknown`.
