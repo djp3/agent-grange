@@ -1015,7 +1015,7 @@ grange port. What farm reports is farm's concern (R5.4).
 | 26 | owner placement (D8) | on every agent entry | lifted to the record |
 | 27 | label and organization names | `agent-grange.service`; no organization name anywhere in the repo | keep the prefixed label |
 | 28 | test runner (review pass 2) | the built image with tests bind-mounted; host run optional | host interpreter |
-| 29 | incarnation healing after expiry (pass 2, agent-grange's choice) | claim narrowed: heals while a peer still holds the old record, otherwise absent until `FORGET_SECONDS` pass | list remembered versions in digests, which needs a marker so they are not merged as live |
+| 29 | incarnation healing after expiry (pass 2; confirmed by Don 2026-11-18) | claim narrowed: heals while a peer still holds the old record, otherwise absent until `FORGET_SECONDS` pass | list remembered versions in digests, which needs a marker so they are not merged as live |
 | 30 | restart after a reboot (review pass 3, Don) | no automatic restart; `make up` brings the grange back | restart policy on the containers |
 | 31 | comparing farm pushes (pass 3; confirmed by Don 2026-11-18) | the same entries in any order are the same list | exact ordered comparison, with farm required to keep a stable order |
 | 32 | long-poll `wait` (pass 3; confirmed by Don 2026-11-18) | defaults to 30 seconds, its maximum | no default; answer immediately when `wait` is absent |
@@ -1102,4 +1102,6 @@ grange port. What farm reports is farm's concern (R5.4).
   in that pass: farm pushes compared without regard to order (decision 31),
   the 30-second default `wait` (decision 32), and the `GRANGE_ID` rule
   (decision 34). He also took on standing up the team headscale server, with
-  no date yet (R9.0, decision 21, open items).
+  no date yet (R9.0, decision 21, open items), and confirmed the narrowed
+  healing claim of R4.8 (decision 29). No decision in the log is left
+  unconfirmed.
