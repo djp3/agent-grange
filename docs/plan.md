@@ -2,8 +2,9 @@
 
 Companion to `requirements.md`; requirement numbers below refer to it.
 Rewritten 2026-11-18 against the requirements as they stood during Don's
-manual review. Not approved: phase 0 starts only on Don's word. Where this plan
-and the requirements disagree, the requirements win and the plan is corrected.
+manual review, and revised the same day after a third review pass. Not
+approved: phase 0 starts only on Don's word. Where this plan and the
+requirements disagree, the requirements win and the plan is corrected.
 
 Nine phases, 0 to 8, each ending in something that runs and is checked.
 Phases 0 to 4 need no tailnet and no control server, so they are built and
@@ -34,9 +35,11 @@ S is a sitting, M a day, L two to three days, as rough relative sizes.
   host run is an optional fast loop, not the reference.
 - Configuration is environment only (section 7). Defaults for the grange keys
   live in one place, `config.py`. Compose passes each key through from `.env`
-  and an empty value means "use the default", so the compose file never
-  repeats a default. The one exception is `GRANGE_PORT`, which compose itself
-  needs for the port publish.
+  and an empty value means "use the default" (section 7), so the compose file
+  does not repeat a default. There are two exceptions, where compose itself
+  consumes the value: `GRANGE_PORT` for the port publish, and `TS_TAG` for the
+  tag the sidecar advertises. The freshness keys keep the compose defaults
+  they have today (R8.5).
 - Every module takes a clock object with a monotonic reading for ages and a
   wall reading for incarnations, so tests and the simulation run in simulated
   time.
@@ -116,12 +119,13 @@ docker/
       state.py       Store: merge, expiry, forget map, cursor, farm_stale, wait
       ticker.py      time-driven transitions: farm_stale flip, expiry, resume gap
       api_local.py   /v1/farm, /v1/agents, /health, /version
-      api_gossip.py  /v1/gossip handler and the exchange client
-      gossip.py      heartbeat, repair, event-driven push, live set, neighbours, leaving
+      api_gossip.py  /v1/gossip handler and the HTTP exchange client
+      gossip.py      the core: live set, marks, neighbours, probe, what is sent to whom
+      runtime.py     the shell: timers, worker pool, HTTP transport, signal handler
       discovery.py   static peers; later the Tailscale local API
   tests/             unittest modules, one per grange module, plus the two example replays
   tests/sim/         phase 3: the 100-grange simulation
-  tools/             run on the host, so Python 3.9 or later, standard library only
+  tools/             run on the host: Python 3.9 or later, standard library only (R8.8)
     fake_farm.py     scripted pusher for the harness
     mock_github.py   ETag-aware stand-in for the tag and compare endpoints
     scenario.py      drives and times the phase 4 scenarios
@@ -141,6 +145,7 @@ docs/
   `test-sim`, `test-host` (the same discovery on the host interpreter,
   optional), `test-plain`, and `test-headscale`. `make logs` follows the
   `grange` service. `build` and `ps` stay.
+- The compose file carries no restart policy, in this phase or later (R8.9).
 
 Done when the rename criterion holds, `make test` runs an empty suite inside
 the image, `make up` starts the current server reporting AHEAD of the new tag,
@@ -152,8 +157,8 @@ Pure Python, no sockets. This is where the correctness lives, so it gets the
 most tests.
 
 - `config.py`: every key in section 7 with its type and default. An empty
-  value means the default. A missing `GRANGE_ID`, or one that cannot serve as
-  the sidecar's hostname suffix (R8.1), refuses to start with a one-line
+  value means the default. A missing `GRANGE_ID`, or one outside the
+  character and length rule of section 7, refuses to start with a one-line
   reason and exit code 78, as the freshness refusal does (startup step 2).
   `GRANGE_PEERS` parses to a list of `host:port`. The caps of R4.3 and R5.17
   and the resume gap of R6.22 are constants here, not keys.
@@ -163,21 +168,22 @@ most tests.
   string (R4.1); `Record` with `proto, group, grange, incarnation, counter,
   rev, farm_age_s, farm_stale, leaving, agents`; `content_version()` returning
   `(incarnation, rev)` and `liveness_version()` returning `(incarnation,
-  counter)`; `validate()` enforcing the R4.3 limits and types and dropping
-  any field of an agent entry other than the three, so nothing else can be
-  relayed (R4.4, R9.11); a `DigestEntry` of `[incarnation, counter, rev,
-  farm_age_s]`; JSON in and out.
+  counter)`; `validate()` enforcing the R4.3 limits and types, reporting a
+  wrong type so the API can answer 400, and dropping unknown fields, so
+  nothing but the three agent fields can be relayed (R4.4, R9.10, R9.11); a
+  `DigestEntry` of `[incarnation, counter, rev, farm_age_s]`; JSON in and out.
 - `state.py`: `Store(clock, cfg)` with
   - `apply_body(record) -> changed` implementing the content half of R4.5 and
-    R6.5 to R6.7, with the forget map keyed by liveness version and
-    readmission by body only;
+    R6.5 to R6.7, with the forget map keyed by liveness version, readmission
+    by body only, and a `leaving` body removing the peer only when R4.5
+    accepts it;
   - `apply_digest(entries)` implementing the liveness half of R4.5 and R5.18:
     same incarnation as the stored body, or nothing happens;
   - the local record: incarnation chosen at construction from the wall
     reading (R6.17), `bump()` for the heartbeat (counter only),
-    `set_agents(list) -> changed` (rev and counter, also when the push only
-    clears `farm_stale`, R5.3), `farm_age_s`, `farm_stale` with the
-    never-pushed rule from R6.3, `leave()`;
+    `set_agents(list) -> changed` (rev and counter; a reordered list is not a
+    change, a push that clears `farm_stale` is, R5.3), `farm_age_s`,
+    `farm_stale` with the never-pushed rule from R6.3, `leave()`;
   - `correct_incarnation(seen)` implementing R4.8: strictly greater versions
     only, one correction, then the duplicate flag and no further correction
     while it is set;
@@ -185,39 +191,43 @@ most tests.
   - `cursor` and `wait_for(after, timeout)` on a `threading.Condition`,
     advancing only on the R5.6 events, waiting only when `after` equals the
     cursor (R5.8);
-  - `picture()` producing the R5.5 body with `seen_age_s` and aged
-    `farm_age_s` (R5.9);
+  - `picture()` producing the R5.5 body, local grange first and the others
+    by id, with `seen_age_s` and aged `farm_age_s` (R5.9);
   - `digest()`, `bodies_newer_than(digest)`, and `bodies_missing_from(digest)`
     for the repair exchange (R5.10), every outgoing body stamped with the
     Store's current liveness for that grange (4.2) and the list trimmed to the
     R5.17 caps.
 
 Tests (R10.1): configuration defaults, empty meaning default, and the
-refusals; content ordering and ties; liveness refresh from a digest with no
-body; a digest entry for an unknown id creates nothing; a digest entry with a
-greater incarnation than the stored body refreshes nothing, and after every
-operation the stored body and liveness share one incarnation; restart with
-higher incarnation replaces without expiry; incarnation correction after a
-backward clock step; an equal version for the own id is ignored as an echo;
-two Stores sharing an id settle after a bounded number of corrections, the
-loser keeps `duplicate_id` while the winner's flag clears; expiry at exactly
-`EXPIRE_SECONDS`; a stale copy from a lagging peer is refused after removal, a
-digest entry never readmits, and a relayed body carrying the relayer's later
-counter does; `leaving` removes at once; heartbeat does not move the cursor, an
-agent change does, a peer's first body does, a peer expiring does,
+refusals for a missing or invalid `GRANGE_ID`; content ordering and ties;
+liveness refresh from a digest with no body; a digest entry for an unknown id
+creates nothing; a digest entry with a greater incarnation than the stored
+body refreshes nothing, and after every operation the stored body and
+liveness share one incarnation; restart with higher incarnation replaces
+without expiry; incarnation correction after a backward clock step; an equal
+version for the own id is ignored as an echo; two Stores sharing an id settle
+after a bounded number of corrections, the loser keeps `duplicate_id` and the
+winner's flag never sets; a seen age equal to `EXPIRE_SECONDS` is kept and
+anything greater expires (R6.4); a stale copy from a lagging peer is refused
+after removal, a digest entry never readmits, and a relayed body carrying the
+relayer's later counter does; an accepted `leaving` body removes at once and
+one from an older incarnation removes nothing; heartbeat does not move the
+cursor, an agent change does, a peer's first body does, a peer expiring does,
 `farm_stale` flipping does; `after` equal to the cursor waits and any other
 value returns; `farm_stale` true when farm never pushed and the grace has
-passed, and a push with an identical list while stale is a content change;
-oversize input is rejected and outgoing bodies are trimmed to the caps;
-same-named agents are both kept; a state string never seen before is
-accepted; an extra field on an agent entry is dropped.
+passed; a push with an identical list while stale is a content change, and a
+push that only reorders the list is not; oversize input is rejected, outgoing
+bodies are trimmed to the caps, and the record cap counts the own record; the
+picture lists the local grange first and the others by id; same-named agents
+are both kept; a state string never seen before is accepted; an extra field
+on an agent entry is dropped.
 
 **Replay of the worked example (4.3).** One test module walks the ten steps
 of section 4.3 with three Stores and a fake clock, exchanging bodies and
-digests by direct calls, and asserts the versions and cursor moves the text
-gives. The example checks the code and the code checks the example: a number
-the replay contradicts is corrected in the requirements, not papered over in
-the test.
+digests by direct calls. It asserts the versions the text gives and, at each
+step, whether each cursor moved; it does not assert by how much (R5.6). The
+example checks the code and the code checks the example: a number the replay
+contradicts is corrected in the requirements, not papered over in the test.
 
 ## Phase 2: local API and ticker
 
@@ -225,16 +235,18 @@ the test.
 wrapper so a stale image refuses these routes too (R5.16).
 
 - `PUT /v1/farm`: parse, validate, `set_agents`, 204; 400 on malformed, 413
-  over limits (R5.1 to R5.3). The declared length is checked against the cap
-  before the body is read, so no request can make the server read without
-  bound (R9.10).
-- `GET /v1/agents`: `after` and `wait` (cap 30); immediate answer unless
-  `after` equals the cursor (R5.7, R5.8).
+  over limits (R5.1 to R5.3). The declared length is checked against the
+  1 MiB cap of R5.1 before the body is read, so no request can make the
+  server read without bound (R9.10).
+- `GET /v1/agents`: `after` and `wait`, which defaults to 30 and is capped
+  there; immediate answer unless `after` equals the cursor; 400 for a value
+  that is not a non-negative number (R5.7, R5.8).
 - `GET /health`: the existing freshness block plus the R5.14 fields.
   `cursor`, `incarnation`, and `duplicate_id` are live from this phase.
-  `peers_discovered`, `peers_live`, `last_gossip_age_s`, and the `rejected`
-  counts are present and zero until phase 3 fills them, `rejected.identity`
-  until phase 5. `GET /version` is unchanged (R5.15).
+  `peers_discovered`, `peers_live`, and the `rejected` counts are present and
+  zero until phase 3 fills them, `rejected.identity` until phase 5.
+  `last_gossip_age_s` is `null` until the first exchange. `GET /version` is
+  unchanged (R5.15).
 - `ticker.py`: a one-second thread that runs `expire()` and re-evaluates the
   local `farm_stale`, so time-driven transitions move the cursor before the
   gossip scheduler exists. It measures the gap since its previous run through
@@ -257,68 +269,83 @@ Tests: in-process server on an ephemeral port; a push wakes a waiting
 long-poll within a few milliseconds; a long-poll with nothing happening
 returns at `wait`; `after` ahead of the cursor returns at once; a fake-clock
 ticker flips `farm_stale` and moves the cursor; a fake-clock gap raises the
-resume signal; limits produce 413; the healthcheck script still passes against
-it. By hand: `make up` with only `GRANGE_ID` in `.env` starts, a `curl` push
-shows up in `GET /v1/agents`, and `make down` returns within two seconds.
+resume signal; limits produce 413 and malformed input 400, a bad `after` or
+`wait` included; the healthcheck script still passes against it. By hand:
+`make up` with only `GRANGE_ID` in `.env` starts, a `curl` push shows up in
+`GET /v1/agents`, and `make down` returns within two seconds.
 
 ## Phase 3: gossip and the design-size simulation
 
 - `api_gossip.py`: `POST /v1/gossip` handler implementing R5.10's two uses:
   push (bodies in, 204 out) and repair (digest in; own digest plus newer and
   missing bodies out). Reject on `proto` or `group` mismatch with 409, log
-  once per peer, and count it (R5.11, R6.21); enforce the R5.17 caps with 413;
-  count ids beyond the record cap as overflow. The listener binds only to the
-  gossip address and answers only sources in the allowed set: in plain mode
-  the bridge address and the harness network, in tailnet mode the tailnet
-  address and tailnet sources (R5.12, added in 5.2). The client side has
+  once per peer, and count it (R5.11, R6.21); refuse malformed bodies with 400
+  (R9.10); enforce the R5.17 caps with 413 and count those, and ids beyond the
+  record cap, as overflow. The listener binds only to the gossip address and
+  refuses any source outside the allowed set with 403: in plain mode the
+  bridge address and its network (R6.9), in tailnet mode the tailnet address
+  and tailnet sources (R5.12, added in 5.2). The HTTP client side has
   `push(peer, bodies)` and `repair(peer)`, the latter doing the round trip
-  and then the follow-up push of what the peer lacks.
-- `gossip.py`:
+  and then the follow-up push of what the peer lacks; anything but a 2xx
+  answer is a failure (R6.20).
+- `gossip.py` is a core with no threads and no sockets. It is driven by the
+  clock object, reaches peers only through a transport interface, and holds
+  every decision: the live set, the failed marks, the neighbours, the probe,
+  which peer to repair with, and what is sent to whom. The runtime and the
+  simulation use this core unchanged, so the simulation exercises the real
+  behaviour and not a copy of it (R10.5). The core covers:
   - heartbeat: `bump()` every `HEARTBEAT_SECONDS` (R6.2), nothing sent;
   - resume: on the ticker's signal, `bump()` and one repair at once, whose
     follow-up push readmits this grange at the peer (R6.22);
-  - repair: every `REPAIR_SECONDS`, `repair()` with one random live peer,
-    preferring non-neighbours (R6.13, R6.10);
+  - repair: every `REPAIR_SECONDS`, one repair with a peer drawn uniformly
+    from the live addresses that are not neighbours, or from the whole live
+    set when all of them are (R6.13, R6.10);
   - event-driven push: the Store signals when the local record's content
-    changed or a body with new content arrived; a worker pushes it to all
-    neighbours at once, excluding the sender for forwarded bodies (R6.11,
-    R6.12). No scheduler tick is involved, since per-hop latency multiplies;
+    changed, when its incarnation was corrected (R4.8), or when a body with
+    new content arrived; the record goes to all neighbours at once, excluding
+    the sender for forwarded bodies (R6.11, R6.12). No scheduler tick is
+    involved, since per-hop latency multiplies;
   - own address: the tailnet IPv4 with the gossip port in tailnet mode; in
     plain mode the container's hostname with the gossip port, which the
-    harness makes equal to what the other granges list in `GRANGE_PEERS`;
-  - order: addresses compare as `host:port` strings. Any total order works
-    as long as every grange uses the same one, which is what makes the
-    successor edges form one ring;
+    harness makes equal to what the other granges list in `GRANGE_PEERS`
+    (R6.9);
+  - order: addresses compare as `host:port` strings, byte by byte (R6.10);
   - neighbours: successor in that order plus the `FANOUT - 1` live addresses
     with the lowest `hashlib.sha256` of own id joined to address, recomputed
     on live-set change (R6.10);
   - live set: addresses bound to an unexpired record, plus addresses with no
     unexpired record that discovery hints online, minus addresses marked
-    failed; the failed mark clears on success or when discovery next reports
-    the address online (R6.10, R6.20);
+    failed. A request that does not get a 2xx answer marks the address; the
+    mark clears on a later success, on an accepted request from that address,
+    or when discovery next reports it online (R6.10, R6.20);
   - probe: every `DISCOVERY_SECONDS`, and on every repair tick while the live
     set is empty, one repair with a random discovered address outside the
     live set, so split halves and a lone returner find the mesh again (R6.10);
-  - timeouts: connect 1 second, exchange 3 seconds, pool of `2 x FANOUT`
-    (R6.20);
-  - address to id binding from `from` on first success (R6.19);
+  - address to id binding from `from` on the most recent successful exchange
+    in either direction, with a change logged once (R6.19);
   - startup: discovery, then up to `FANOUT` parallel repairs bounded to 5
-    seconds, then serve (startup steps 5 and 6, R6.1);
-  - leaving: the SIGTERM handler pushes a `leaving` body to neighbours, waits
-    at most two seconds, exits (R6.16);
-  - stale image: when the freshness state flips to stale the scheduler stops
+    seconds, whose follow-up pushes deliver this grange's first record, then
+    serve (startup steps 5 and 6, R6.1);
+  - leaving: a `leaving` body to all neighbours (R6.16);
+  - stale image: when the freshness state flips to stale the core stops
     sending, and the handler already returns 503 (R5.16, R6.18).
+- `runtime.py` is the thin shell around the core: the timers, the worker pool
+  of `2 x FANOUT`, the HTTP transport with its 1-second connect and 3-second
+  exchange timeouts (R6.20), and the SIGTERM handler, which asks the core to
+  leave, waits at most two seconds for the pushes, and exits (R6.16).
 - `discovery.py`: in this phase only the static `GRANGE_PEERS` provider, in
   which every listed address counts as online (R6.9), behind the interface
   the Tailscale provider will implement in phase 5.
 - `/health` now reports `peers_discovered`, `peers_live`,
   `last_gossip_age_s`, and the `proto`, `group`, and `overflow` counts.
 
-**Simulation (R10.5), `tests/sim/`.** A pure-Python mesh of 100 Stores wired
-through the real request and response construction, with a fake transport that
-adds a per-hop latency parameter, can cut links, and counts bytes; a fake
-clock; and a fake discovery whose online hint follows whether a grange is up,
-with a configurable lag. Runs, each over one simulated hour: all alive; half
+**Simulation (R10.5), `tests/sim/`.** A pure-Python mesh of 100 granges with
+10 agents each. Every grange is a Store plus the `gossip.py` core, both used
+unchanged and wired through the real request and response construction to a
+fake transport that adds a per-hop latency parameter, can cut links, and
+counts bytes; a fake clock; and a fake discovery whose online hint follows
+whether a grange is up, with a configurable lag. Runs, each over one
+simulated hour: all alive; half
 the discovered peers dead; two halves partitioned past `EXPIRE_SECONDS` and
 rejoined; a grange silent past `EXPIRE_SECONDS` returning, and a fresh start;
 two granges configured with one id. Assertions as R10.5 states them: the
@@ -338,7 +365,9 @@ live set and from neighbours; a failed address re-enters the live set when
 discovery hints it online; two halves that expired each other reconnect
 through the hint and, with hints withheld, through the probe; a resume signal
 readmits a paused grange within one repair; one peer joining or leaving
-changes at most one neighbour.
+changes at most one neighbour; a 409 or 503 answer marks the address failed
+and an accepted request from it clears the mark; a changed `from` rebinds the
+address; the first record leaves by the startup repairs' follow-up push.
 
 **Replay of the discovery examples (6.4).** One test module walks the
 examples of section 6.4 with thirteen simulated granges at the addresses the
@@ -367,7 +396,7 @@ Docker, polls the five boards, and asserts the R10.2 list:
 |---|---|
 | change on one grange | visible on all five `/v1/agents` within 5 s |
 | kill one grange | gone from all boards within `EXPIRE_SECONDS` plus 15 s |
-| restart it | new incarnation replaces the old record before expiry |
+| kill without a `leaving` body, start again within `EXPIRE_SECONDS` | new incarnation on all boards within 5 s of serving again; never absent from a board in between |
 | fake farm goes silent | `farm_stale` true within `FARM_STALE_SECONDS` plus 5 s, agents still listed |
 | clean stop | gone from all boards within 3 s |
 | pause past `EXPIRE_SECONDS`, then unpause | removed, then readmitted within 5 s of unpause |
@@ -434,18 +463,20 @@ stands up the team server has it before phase 8 (R9.0).
   label `agent-grange.service=tailscale`, and the `127.0.0.1:${GRANGE_PORT}`
   publish; `grange` with `network_mode: service:tailscale`, `depends_on`
   healthy, the socket mounted, its label, running as the user the spike
-  settled on, with the 75-second start period.
+  settled on, with the 75-second start period. Neither service has a restart
+  policy (R8.9).
 - `discovery.py` gains the Tailscale provider and it becomes the default when
   `GRANGE_PEERS` is empty: peers from the daemon's status filtered by
   `TS_TAG`, with IPv4 addresses and the online hint, refreshed every
   `DISCOVERY_SECONDS` (R6.8); `whois(addr)` returning the device's tags; the
   sidecar hostname `grange-<id>` kept as a hint, with a disagreement against
   the `from` field logged once (R6.19).
-- Startup: wait up to 60 seconds for a tailnet IPv4 address, then refuse
-  (step 3); bind gossip to it and only it (step 4).
+- Startup: when `GRANGE_PEERS` is empty, wait up to 60 seconds for a tailnet
+  IPv4 address, then refuse (step 3); bind gossip to it and only it (step 4).
+  Plain mode does neither (R6.9).
 - `api_gossip.py`: source must be a tailnet address, and `whois` must report
-  the tag, or the exchange is rejected, logged once per peer, and counted as
-  `rejected.identity` (R5.12, R5.13).
+  the tag, or the exchange is refused with 403, logged once per peer, and
+  counted as `rejected.identity` (R5.12, R5.13).
 - `healthcheck.py` keeps hitting loopback, which works inside the shared
   namespace.
 - `tools/query_server.py` updated to the sidecar's label, since the sidecar
@@ -475,8 +506,10 @@ sidecar without the tag (R10.3). `make test-headscale` runs:
 
 - `README.md` and `docker/README.md` rewritten for the two-container system:
   what it is, how to join (R8.4), how to read the board with `curl`, how farm
-  and frolic connect, the freshness check as it stands, and the note from
-  R6.21 about using a private `GRANGE_GROUP` while working ahead of the tag.
+  and frolic connect, the freshness check as it stands, that the grange does
+  not come back by itself after a reboot or a Docker restart and needs
+  `make up` (R8.9), and the note from R6.21 about using a private
+  `GRANGE_GROUP` while working ahead of the tag.
 - `.env.example` checked key by key against section 7 and `config.py`.
 - GitHub Actions: `make test`, `make test-sim`, and `make test-plain` on every
   push (R8.8). All three need only Docker, so CI and a laptop run the same
@@ -504,8 +537,9 @@ Prerequisite outside this repo: the team's headscale server, stood up from
    earlier grange refuses on its next poll, which is the intended signal to run
    `make update` (R6.18).
 4. Watch the first week for expiry flapping on sleep and wake and for real
-   traffic against R6.15, and tune `EXPIRE_SECONDS` if needed. It is an `.env`
-   change, not a release.
+   traffic against R6.15. One teammate can try a different `EXPIRE_SECONDS`
+   in their own `.env`. A team-wide change is a new default in `config.py`,
+   which is a release and a tag move (section 7).
 
 ## External dependencies
 
@@ -532,7 +566,7 @@ Prerequisite outside this repo: the team's headscale server, stood up from
 | R3.8, R5.10, R5.11, R5.17, R5.18, R6.11 to R6.13: gossip | 3 | phase 3 tests, phase 4 scenarios |
 | R3.9: names | 0 | the `git grep` criterion |
 | R4.1 to R4.4: agent | 1 | phase 1 tests |
-| R4.5 to R4.9 and the example in 4.3: record, merge, incarnation | 1 | phase 1 tests, replay of 4.3 |
+| R4.5 to R4.9 and the example in 4.3: record, merge, incarnation | 1; 3 for the push after a correction | phase 1 tests, replay of 4.3 |
 | R5.13: peer identity | 5.2 | phase 6 negative cases |
 | R5.14 to R5.16, R6.18: health, version, stale image | 2, 3 | phase 2 tests, stale scenario |
 | 6.1 and R6.1: startup | 2, 3, 5.2 | phase 5 timing check |
@@ -547,6 +581,7 @@ Prerequisite outside this repo: the team's headscale server, stood up from
 | R8.5: freshness unchanged | 0 | AHEAD start in phase 0, stale scenario |
 | R8.6, R8.7: runtimes, non-root | 5.1 | spike on both runtimes |
 | R8.8: test runner | 0, 3, 7 | CI runs the three targets |
+| R8.9: no automatic restart | 0, 5.2 | the compose file has no restart policy; README note in phase 7 |
 | R9.7 to R9.13: security, privacy | 1, 2, 3, 5.2 | validation tests, negative cases |
 | R10.1 to R10.5 | 1 to 8 | they are the checks above |
 

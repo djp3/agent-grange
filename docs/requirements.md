@@ -114,7 +114,9 @@ The v1 unit of status is a triple reported by farm:
 - **R4.3** Every string field is limited to 256 bytes; a record carries at most
   200 agents. Pushes that exceed either limit are rejected with 413.
 - **R4.4** No other field about a session leaves the machine: no transcripts,
-  prompts, tokens, paths, hostnames, or timestamps from farm.
+  prompts, tokens, paths, hostnames, or timestamps from farm. If farm sends
+  any other field on an agent entry, grange drops it, does not reject the
+  push, and never relays it.
 
 ### 4.2 Grange record
 
@@ -188,7 +190,8 @@ than its sender's knowledge.
   map refuses the new record silently (R6.6), and the grange is absent from
   other boards until `FORGET_SECONDS` have passed since the expiry; its own
   board keeps working. Damping: a second trigger within `FORGET_SECONDS` of a
-  correction means two granges share an id. The grange then logs the source,
+  correction means two granges share an id. The grange then logs the address
+  the version arrived from, which may be a relay and not the duplicate itself,
   sets `duplicate_id: true` in `/health`, does not correct again while the
   flag is set, and keeps serving its local API. The flag clears after
   `FORGET_SECONDS` with no further foreign greater version. Two granges
@@ -209,8 +212,10 @@ for narration: nothing below compares clocks across machines.
 1. **Start.** At 09:00:00 Don's grange starts and reads its clock in
    milliseconds, 1763974800000, written I1 below. That is its incarnation for
    as long as this process lives. `counter` and `rev` are 1, the agent list is
-   empty, `farm_age_s` is `null`. It pushes the record. Alice and Bob now hold
-   "djp3: I1, counter 1, rev 1".
+   empty, `farm_age_s` is `null`. Its startup repairs with Alice and Bob come
+   back with digests that do not list `djp3`, so each repair's follow-up push
+   hands over his record. Alice and Bob now hold "djp3: I1, counter 1, rev
+   1".
 
 2. **First farm push.** At 09:00:05 farm sends two sessions. The list changed,
    so this is a content change: `rev` becomes 2 and `counter` becomes 2. The
@@ -259,9 +264,9 @@ for narration: nothing below compares clocks across machines.
    than I1, so this is a new life of the same grange: the body is accepted,
    and its liveness is taken whole.
    If Bob, lagging, later re-sends the old I1 body, it is refused because I1
-   is below what everyone remembers. If a digest entry "I2, counter 3" reaches
-   someone who still holds an I1 body, it refreshes nothing: that peer waits
-   for the I2 body, which the next repair response delivers.
+   is below the I2 record everyone now holds. If a digest entry "I2, counter
+   3" reaches someone who still holds an I1 body, it refreshes nothing: that
+   peer waits for the I2 body, which the next repair response delivers.
 
 8. **Laptop sleeps.** At 12:30 Don closes the lid with the counter at 1300.
    The process is frozen, so no heartbeat moves and no repair answers. By
@@ -280,10 +285,10 @@ for narration: nothing below compares clocks across machines.
    send a `leaving` body, and Don starts it again. The new process picks I4
    from the corrected clock, so I4 is less than I3. Peers still hold "I3,
    counter 5", because a crash leaves the old record in place until it
-   expires. Don's push "I4, counter 1, rev 1" is ignored everywhere as
-   an older incarnation. Within 3 seconds Don's first repair comes back with a
-   digest listing his own id as "I3, counter 5", which is greater than his
-   own "I4, counter 1". He adopts I3 plus 1, resets `counter` and `rev` to 1,
+   expires. Don's startup repair comes back with a digest listing his own id
+   as "I3, counter 5", which is greater than his own "I4, counter 1". Had a
+   copy of the I4 body reached a peer first, it would have been ignored as an
+   older incarnation. He adopts I3 plus 1, resets `counter` and `rev` to 1,
    and pushes; everyone accepts. Healed in one exchange. This works only
    while some peer still holds the I3 record. Had the restart come after
    every peer had expired it, or been a clean `make update`, whose `leaving`
@@ -293,10 +298,13 @@ for narration: nothing below compares clocks across machines.
 
 10. **Two granges with one id.** Bob copies Don's `.env` by mistake and starts
     a second `djp3` with incarnation I5, greater than Don's current one. Don
-    sees I5 in a digest and corrects to I5 plus 1. Bob sees that, and
-    corrects to I5 plus 2. Don sees that too, his second trigger within ten
-    minutes: he logs Bob's address, sets `duplicate_id` in `/health`, and
-    stops correcting. Bob never sees a greater version again, so his flag
+    sees I5 in a digest and corrects: with both clocks roughly right, his
+    current clock reading is already later than I5, so that becomes his new
+    incarnation. Bob sees that and corrects in turn, to his own current
+    reading, later still. Don sees that too, his second trigger within ten
+    minutes: he logs the address the version came from, which may be a
+    relaying peer and not Bob's machine, sets `duplicate_id` in `/health`,
+    and stops correcting. Bob never sees a greater version again, so his flag
     never sets. The mesh shows Bob's agents under `djp3`; Don's own board
     still works, and his health page says why the team cannot see him. When
     Bob fixes his `.env` and restarts, peers remember Bob's last version for
@@ -326,15 +334,18 @@ machine.
 
 - **R5.1** The body is the complete list of sessions farm chooses to report.
   Grange replaces its agent list with it. An empty list is valid and means
-  farm has nothing to report.
+  farm has nothing to report. The body is at most 1 MiB; a longer one is
+  refused with 413 before it is read, and a malformed one with 400 (R9.10).
 - **R5.2** Farm sends on every change and at least every 30 seconds as a
   heartbeat, even when nothing changed.
 - **R5.3** Grange answers 204 and records the push time. If the list differs
   from the previous one, or `farm_stale` was true, that is a content change:
-  `rev` and `counter` increase and the record is pushed at once (R6.11). A
-  push that clears `farm_stale` is a content change even when the list is
-  identical (R6.3). Otherwise nothing else happens; liveness is the
-  heartbeat's job (R6.2).
+  `rev` and `counter` increase and the record is pushed at once (R6.11). Two
+  lists are the same when they hold the same entries the same number of
+  times, in any order, so a push that only reorders the list changes nothing
+  and the stored order is kept. A push that clears `farm_stale` is a content
+  change even when the list is identical (R6.3). Otherwise nothing else
+  happens; liveness is the heartbeat's job (R6.2).
 - **R5.4** Grange applies no filter of its own. Which sessions farm reports,
   and by what rule, is farm's concern and lives in farm's configuration; grange
   never needs to know the rule, now or when farm's filtering changes.
@@ -368,20 +379,29 @@ machine.
 ```
 
 - **R5.5** The response is always the whole merged picture: every grange not yet
-  expired (section 6.3), including the local one.
-- **R5.6** `cursor` is a local integer that increases on exactly these events:
-  the local agent list changes; the local `farm_stale` flips; a peer body is
-  accepted with a new `(incarnation, rev)`, including the first body from a
-  peer; a peer expires, leaves, or is readmitted. Heartbeats, digest liveness
-  refreshes, and the ticking of age fields do not move it.
+  expired (section 6.3), including the local one. The local grange is listed
+  first and the others follow in order of grange id.
+- **R5.6** `cursor` is a local integer that increases, by at least one,
+  whenever one or more of these events occur: the local agent list changes;
+  the local `farm_stale` flips; a peer body is accepted with a new
+  `(incarnation, rev)`, including the first body from a peer; a peer expires,
+  leaves, or is readmitted. Several events at once may move it by one or by
+  more, so clients compare cursors for equality only. Heartbeats, digest
+  liveness refreshes, and the ticking of age fields do not move it.
 - **R5.7** With `after`, grange answers immediately if the cursor differs from
-  it, otherwise holds the request up to `wait` seconds (maximum 30) and then
-  answers with the current picture either way. Without `after`, or with
-  `after=0`, it answers immediately.
+  it, otherwise holds the request up to `wait` seconds and then answers with
+  the current picture either way. `wait` defaults to 30, which is also its
+  maximum: a larger value is treated as 30, and `wait=0` answers immediately.
+  Without `after`, or with `after=0`, it answers immediately. An `after` that
+  is not a non-negative integer, or a `wait` that is not a non-negative
+  number, is refused with 400.
 - **R5.8** After a grange restart the cursor starts again from 1. `after` less
   than the cursor means something changed; `after` greater than the cursor
   means the grange restarted; both are answered immediately. Only `after` equal
-  to the cursor waits. Clients may use `incarnation` to notice the restart.
+  to the cursor waits. Clients may use `incarnation` to notice the restart,
+  with one caution: an incarnation correction (R4.8) also changes
+  `incarnation`, with no restart and no cursor reset, so a changed
+  `incarnation` alone does not prove a restart.
 - **R5.9** `seen_age_s` is how long since this grange last refreshed that
   peer's liveness (R4.5), by body or digest. `farm_age_s` is the last relayed
   value plus the time since it was received. `farm_stale` is the origin's flag
@@ -423,18 +443,20 @@ as the sender holds it at that moment.
 - **R5.11** `proto` or `group` mismatch is rejected with 409, logged once per
   peer, and counted in `/health`.
 - **R5.12** The gossip endpoint is bound only to the tailnet IPv4 address and
-  answers only connections whose source is a tailnet address.
+  answers only connections whose source is a tailnet address. Any other
+  source is refused with 403.
 - **R5.13** Before merging, grange asks the sidecar's local API who the source
   address is. The exchange is accepted only if that device carries the grange
-  tag. Failure to answer is treated as rejection, logged once per peer, and
-  counted in `/health`. The headscale ACL is the mandatory floor; this check is
-  the belt on top.
+  tag; otherwise it is refused with 403. Failure to answer is treated as
+  rejection, logged once per peer, and counted in `/health`. The headscale ACL
+  is the mandatory floor; this check is the belt on top.
 - **R5.17** Caps. A request or response body is at most 1 MiB; a message
   carries at most 200 bodies and at most 1000 digest entries; a grange holds at
-  most 1000 peer records and ignores further ids, counting them in `/health`.
-  Senders trim to the caps: as many bodies as fit go in this exchange and the
-  rest follow in later ones. Over-limit messages, which only a violator sends,
-  are rejected with 413 and logged once per peer.
+  most 1000 records, its own included, so its digest always fits, and ignores
+  further ids, counting them in `/health`. Senders trim to the caps: as many
+  bodies as fit go in this exchange and the rest follow in later ones.
+  Over-limit messages, which only a violator sends, are rejected with 413 and
+  logged once per peer.
 - **R5.18** Bodies are accepted only under R4.5. A digest entry refreshes
   liveness only for an id whose body is already stored, and only when the
   entry's incarnation equals the stored body's. An entry for an unknown id, or
@@ -447,8 +469,13 @@ as the sender holds it at that moment.
 - **R5.14** `GET /health` returns 200 while the image is current with: the
   freshness block as today; `cursor`; `incarnation`; `peers_discovered`,
   `peers_live`; `last_gossip_age_s`; `rejected` counts for `proto`, `group`,
-  `identity`, and `overflow`; `duplicate_id`. It returns 503 while the image is
-  stale, as the existing freshness design specifies.
+  `identity`, and `overflow`; `duplicate_id`. `last_gossip_age_s` is the time
+  since the last successful gossip exchange in either direction, and `null`
+  until the first. `rejected.proto` and `rejected.group` count incoming
+  messages refused under R5.11; `rejected.identity` counts those refused
+  under R5.12 or R5.13; `rejected.overflow` counts messages refused with 413
+  and ids ignored beyond the record cap (R5.17). It returns 503 while the
+  image is stale, as the existing freshness design specifies.
 - **R5.15** `GET /version` returns the baked git metadata.
 - **R5.16** While stale, every route including `/v1/gossip` returns 503 and
   the scheduler stops sending, so a stale grange drops out of the mesh and its
@@ -460,14 +487,17 @@ as the sender holds it at that moment.
 
 1. Freshness check against the kill-switch tag, exactly as built. A stale or
    unverifiable image refuses to start.
-2. Read configuration (section 7). Missing `GRANGE_ID` refuses to start.
+2. Read configuration (section 7). A missing or invalid `GRANGE_ID` refuses to
+   start.
 3. Wait for the sidecar to report a tailnet IPv4 address, up to 60 seconds,
-   then refuse to start.
+   then refuse to start. Plain mode skips this step (R6.9).
 4. Bind the local API to loopback and the container's bridge address. Bind the
    gossip listener to the tailnet address. Never bind either to all interfaces.
 5. Run discovery once, then repair exchanges with up to `FANOUT` peers in
    parallel, bounded to 5 seconds in total. Peers that do not answer are simply
-   not live yet.
+   not live yet. There is no separate first push: the follow-up push of these
+   repairs delivers this grange's first record (R5.10), and forward-once
+   spreads it (R6.12).
 6. Serve. The picture fills in over the next repair ticks.
 - **R6.1** Steps 3 to 6 complete within 10 seconds of the sidecar being ready
   under normal conditions. The compose healthcheck's start period covers the
@@ -499,7 +529,9 @@ as the sender holds it at that moment.
 - **R6.4** A peer whose seen age (time since its last liveness refresh, R4.5)
   exceeds `EXPIRE_SECONDS` (default 60) is removed from the picture and the
   cursor moves.
-- **R6.5** A body with `leaving: true` removes the peer immediately.
+- **R6.5** A body with `leaving: true` that is accepted under R4.5 removes the
+  peer immediately. A `leaving` body that R4.5 ignores, such as one from an
+  older incarnation, removes nothing.
 - **R6.6** Flapping guard: the `(incarnation, counter)` of a removed peer is
   remembered for `FORGET_SECONDS` (default 600). A body for that peer is
   readmitted only if its `(incarnation, counter)` is greater than the
@@ -518,9 +550,16 @@ as the sender holds it at that moment.
   with a tailnet IPv4 address, together with the daemon's online hint. The list
   is refreshed every `DISCOVERY_SECONDS` (default 30). New teammates appear
   with no configuration change anywhere.
-- **R6.9** For local testing without a tailnet, `GRANGE_PEERS` (a list of
-  `host:port` for the other granges, never including this one) replaces tag
-  discovery entirely, and every listed address counts as online.
+- **R6.9** Plain mode, for testing only. When `GRANGE_PEERS` is set (a list
+  of `host:port` for the other granges, never including this one), no tailnet
+  is involved. The list replaces tag discovery entirely and every listed
+  address counts as online. Startup does not wait for a sidecar (step 3). The
+  gossip listener binds to the container's bridge address and answers only
+  sources on that network, in place of R5.12. The identity check of R5.13 is
+  not run. This grange's own address is its container hostname with the
+  gossip port, which must equal what the other granges list. An incoming
+  request is matched to the listed peer whose host resolves to its source
+  address (R6.19). A mesh that carries real status never runs in plain mode.
 - **R6.10** Live set and neighbours. The live set is built from discovered
   addresses. An address is live when either (a) it is bound (R6.19) to an id
   whose record is unexpired, or (b) no unexpired record is held for it and the
@@ -536,21 +575,30 @@ as the sender holds it at that moment.
   plus the `FANOUT - 1` (default 4) other live addresses with the lowest
   `hashlib.sha256` digest of this grange's id joined to the address, so the
   choice is stable, differs per grange, and one peer joining or leaving
-  changes at most one neighbour. Python's built-in `hash()` is salted per
-  process and must not be used. Neighbours are recomputed only when the live
-  set changes. The repair peer is drawn uniformly from the live set,
-  preferring non-neighbours.
+  changes at most one neighbour. Sorted order means comparing addresses as
+  `host:port` strings, byte by byte; every grange uses this same order, which
+  is what makes the successor edges form one ring. Python's built-in `hash()`
+  is salted per process and must not be used. Neighbours are recomputed only
+  when the live set changes. The repair peer is drawn uniformly from the live
+  addresses that are not neighbours, or from the whole live set when every
+  live address is a neighbour.
 - **R6.19** Address and id. An address is bound to a grange id by the `from`
-  field of the first successful exchange with it. In tag mode the sidecar
-  hostname `grange-<id>` is a hint only; a disagreement is logged once.
-  Topology (sorting, successor) uses addresses; records and digests use ids.
+  field of the most recent successful exchange with it, in either direction:
+  a request this grange sent there, or an accepted request whose source is
+  that address. A binding that changes is logged once. In tag mode the
+  sidecar hostname `grange-<id>` is a hint only; a disagreement is logged
+  once. Topology (sorting, successor) uses addresses; records and digests use
+  ids.
 - **R6.20** Timeouts and failed addresses. Connecting to a peer times out
   after `CONNECT_TIMEOUT_SECONDS` (default 1) and a whole exchange after
   `EXCHANGE_TIMEOUT_SECONDS` (default 3). Exchanges run on a worker pool of
-  `2 x FANOUT`. A failed exchange marks the address failed; the mark clears on
-  a later successful exchange with it or when the next discovery refresh
-  reports it online. A failed address is outside the live set (R6.10), so
-  closed laptops do not fill the pool or become neighbours.
+  `2 x FANOUT`. A gossip request, push or repair, that does not get a 2xx
+  answer has failed, whether it timed out, was refused, or was answered with
+  an error such as 403, 409, 413, or 503. A failed request marks the address
+  failed; the mark clears on a later successful request to it, on an accepted
+  request from it, or when the next discovery refresh reports it online. A
+  failed address is outside the live set (R6.10), so closed laptops do not
+  fill the pool or become neighbours.
 
 **Examples.** A team of twelve, each with one grange. Tailnet addresses are
 `100.64.0.1` to `100.64.0.12`; Don is `100.64.0.5` and Alice `100.64.0.6`.
@@ -567,11 +615,13 @@ seconds, expiry at 60 seconds.
    repairs with five of them in parallel, and has the full board within a
    few seconds. Neighbours recompute: Carol becomes the successor of
    `100.64.0.12`, and on any grange whose ranking puts her in its top four
-   she displaces exactly one existing neighbour; the rest keep theirs.
+   she displaces exactly one existing neighbour; the rest keep theirs. The
+   team is now thirteen.
 
 2. **Binding an address to a name.** Don's grange first talks to
-   `100.64.0.13` in a repair; the reply says `from: carol`, so from then on
-   that address is Carol for topology and `carol` is the key for her record.
+   `100.64.0.13` in a repair; the reply says `from: carol`, so that address
+   is Carol for topology and `carol` is the key for her record. The latest
+   successful exchange with an address always decides, in either direction.
    The sidecar hostname `grange-carol` agrees. If Bob had set `GRANGE_ID=bob`
    but renamed his sidecar `grange-robert`, grange would log the disagreement
    once and go by `bob`, which is what his records say.
@@ -583,13 +633,14 @@ seconds, expiry at 60 seconds.
    computes the SHA-256 of `djp3` joined to each other live address and takes
    the four smallest. Alice ranks the same addresses with `alice` in front,
    so her four are different, and the mesh does not collapse onto the same
-   few machines. The choice is stable: tomorrow, with the same twelve live,
-   Don has the same five. If Frank's laptop leaves the live set and he was
-   one of Don's four, the fifth-ranked address moves up and the other three
-   stay; if he was Don's successor, the next address in order takes over.
+   few machines. The choice is stable: tomorrow, with the same twelve peers
+   live, Don has the same five. If Frank's laptop leaves the live set and he
+   was one of Don's four, the fifth-ranked address moves up and the other
+   three stay; if he was Don's successor, the next address in order takes
+   over.
 
-4. **Who gets the repairs.** Every 3 seconds Don's grange picks one live
-   peer at random, preferring the seven that are not his neighbours. His
+4. **Who gets the repairs.** Every 3 seconds Don's grange picks one peer at
+   random from the seven live ones that are not his neighbours. His
    pushes already reach the five neighbours, so repairs are how his
    heartbeats, and anything a push missed, reach the rest of the team.
 
@@ -606,9 +657,10 @@ seconds, expiry at 60 seconds.
    every 30 seconds, so a hint that is simply wrong cannot hide a reachable
    peer for good.
 
-6. **The team splits in two.** A relay outage leaves the six in the office
-   able to reach each other but not the six at home, and the reverse, while
-   both halves can still reach headscale. After 60 seconds each half has
+6. **The team splits in two.** Frank's laptop is still closed, so twelve
+   granges are running. A relay outage leaves the six in the office able to
+   reach each other but not the six at home, and the reverse, while both
+   halves can still reach headscale. After 60 seconds each half has
    expired the other; every board shows six granges. The hints still say the
    far half is online, so far addresses stay in each live set, fail, get
    marked, and re-enter at each refresh. When the path heals, the next
@@ -620,15 +672,18 @@ seconds, expiry at 60 seconds.
    far half instead.
 
 7. **Cut off, then back.** Don's grange keeps running but his network drops
-   for ten minutes. Every attempt fails, every address is marked, and after
-   60 seconds everyone on his board expires. With nothing live, the probe
-   runs on every repair tick instead of every 30 seconds, picking a random
-   discovered address. The first tick after the network returns succeeds,
-   the response carries all eleven bodies, and his board refills within
-   about 3 seconds. The lid-closed case is different and is step 8 of the
-   example in 4.3: nothing runs while the machine sleeps, so on wake the
-   addresses are unmarked and still hinted online, and the first repair
-   refills the board at once.
+   for ten minutes. Every attempt fails and marks its address, and after 60
+   seconds everyone on his board expires. Each discovery refresh clears the
+   marks on addresses still hinted online, so there is usually something left
+   in the live set to try; if the live set does empty, the probe takes over
+   and tries a random discovered address on every repair tick. Either way one
+   attempt goes out every 3 seconds. The first one to reach a running peer
+   after the network returns succeeds, the response carries the bodies of the
+   eleven others still running, and his board refills within a few seconds.
+   The lid-closed case is different and is step 8 of the example in 4.3:
+   nothing runs while the machine sleeps, so on wake the addresses are
+   unmarked and still hinted online, and the first repair refills the board
+   at once.
 
 8. **A device that is not a grange.** A teammate's second laptop is joined to
    the same headscale without `tag:grange`. No grange ever discovers it: it
@@ -647,7 +702,7 @@ seconds, expiry at 60 seconds.
 
 - **R6.11** On a content change to its own record, grange pushes the body to
   all neighbours within one second, driven by the event, not by a scheduler
-  tick.
+  tick. An incarnation correction (R4.8) is pushed the same way.
 - **R6.12** On accepting a body with a new `(incarnation, rev)` from any
   source, grange pushes it once to all neighbours except the one it came from,
   again event-driven. Bodies it already held are not forwarded. Digests are
@@ -717,6 +772,18 @@ into the image and never committed.
 | `CHECK_TAG` | `agent-grange-latest` after the phase 0 rename | kill-switch tag |
 | `FRESHNESS_STRICT`, `RECHECK_SECONDS`, `SKIP_FRESHNESS_CHECK`, `GITHUB_TOKEN` | as today | freshness check |
 
+An empty value means the default. `GRANGE_ID` is 1 to 56 characters from
+lowercase letters, digits, and hyphens, and neither starts nor ends with a
+hyphen, so that `grange-<GRANGE_ID>` is a valid hostname (R8.1).
+
+Three keys must be equal on every grange in a mesh: `GRANGE_GOSSIP_PORT`,
+because peers are dialled on the local value and the ACL names it,
+`GRANGE_GROUP`, and `TS_TAG`. The timing keys are local to each grange, but a
+grange's `HEARTBEAT_SECONDS` must stay well under every peer's
+`EXPIRE_SECONDS`. One teammate can try a timing value in their own `.env`; a
+team-wide change is a new default in the code, which is a release and a tag
+move.
+
 The caps in R4.3 and R5.17 and the resume gap in R6.22 are constants in code,
 not configuration.
 
@@ -764,7 +831,13 @@ grange port. What farm reports is farm's concern (R5.4).
   needs Docker anyway. `make test-sim` runs the hour-long simulations (R10.5)
   the same way. `make test-host` runs the unit tests on the host interpreter
   as an optional fast loop with no claim about version parity. CI runs
-  `make test`, `make test-sim`, and `make test-plain`.
+  `make test`, `make test-sim`, and `make test-plain`. The harness drivers in
+  `tools/` run on the host, because they drive Docker, so `make test-plain`
+  and `make test-headscale` need a host Python 3.9 or later; the drivers use
+  the standard library only.
+- **R8.9** No automatic restart. Compose sets no restart policy on either
+  service. After a reboot or a restart of Docker the grange stays down until
+  the developer runs `make up`.
 
 ## 9. Control server, security, privacy
 
@@ -800,7 +873,9 @@ grange port. What farm reports is farm's concern (R5.4).
   developer's machine can push status or read the board. Accepted for
   single-user laptops; recorded as a known limitation.
 - **R9.10** Every incoming body is size-limited and schema-checked before any
-  field is used (R4.3, R5.17).
+  field is used (R4.3, R5.1, R5.17). A body that is not valid JSON, or whose
+  known fields have the wrong type, is refused with 400. Unknown fields are
+  dropped, not rejected.
 
 ### 9.3 Privacy
 
@@ -827,16 +902,19 @@ grange port. What farm reports is farm's concern (R5.4).
   and trimming (R4.3, R5.17); repair request and response construction with
   sender liveness in bodies (R5.10, 4.2); live set, failed marks, and
   neighbour selection (R6.10, R6.20); the resume gap (R6.22).
-- **R10.2** Plain-network mode: a compose file that starts five granges on an
-  ordinary Docker network with `GRANGE_PEERS`, a fake farm that pushes scripted
-  changes, and the mock GitHub server from the freshness work, which lives in
-  `tools/`. Automated scenarios:
+- **R10.2** Plain-network mode (R6.9): a compose file that starts five granges
+  on an ordinary Docker network with `GRANGE_PEERS`, a fake farm that pushes
+  scripted changes, and the mock GitHub server from the freshness work, which
+  lives in `tools/`. The drivers run on the host (R8.8). Automated scenarios:
   - a change on one grange is visible from every other grange's `/v1/agents`
     within 5 seconds;
   - a killed grange disappears from all boards within `EXPIRE_SECONDS` plus 15,
     since its last counter can take several repair rounds to reach the last
     peer and each peer's expiry clock starts when it learns that counter;
-  - a restarted grange replaces its old record immediately;
+  - a grange killed without a `leaving` body and started again within
+    `EXPIRE_SECONDS` has its new incarnation's record on every board within 5
+    seconds of serving again, and is never absent from a board in between
+    (R6.7);
   - a grange whose fake farm stops pushing shows `farm_stale` within
     `FARM_STALE_SECONDS` plus 5 and keeps its agents;
   - a `leaving` body removes a grange within 3 seconds;
@@ -906,7 +984,7 @@ grange port. What farm reports is farm's concern (R5.4).
 | 19 | version split (review D1) | `rev` for content, `counter` for liveness, both in the digest | one counter for both |
 | 20 | contract handoff (D2) | phase 8, as planned | earlier handoff |
 | 21 | team control server (D3) | outside this repo; needed only by phase 8 | deployment in repo |
-| 22 | how work lands (D4) | direct commits to `main` once tests pass; no pull requests | pull requests |
+| 22 | how work lands (D4; landing rule spelled out 2026-11-18) | plain commits on `main` once tests pass; no pull requests, no merge commits; from a worktree branch, `main` is fast-forwarded at the end of each phase on Don's word and pushed only on his word | pull requests |
 | 23 | moving the tag (D5) | by hand | GitHub Actions on merge |
 | 24 | runtimes (D6) | Docker Desktop for Mac and Docker Engine on Linux | Mac only |
 | 25 | names (D7) | `agent-grange` for tag, project, label; renamed in phase 0 | keep `agentic-grange` |
@@ -914,6 +992,9 @@ grange port. What farm reports is farm's concern (R5.4).
 | 27 | label and organization names | `agent-grange.service`; no organization name anywhere in the repo | keep the prefixed label |
 | 28 | test runner (review pass 2) | the built image with tests bind-mounted; host run optional | host interpreter |
 | 29 | incarnation healing after expiry (pass 2, agent-grange's choice) | claim narrowed: heals while a peer still holds the old record, otherwise absent until `FORGET_SECONDS` pass | list remembered versions in digests, which needs a marker so they are not merged as live |
+| 30 | restart after a reboot (review pass 3, Don) | no automatic restart; `make up` brings the grange back | restart policy on the containers |
+| 31 | comparing farm pushes (pass 3, agent-grange's choice) | the same entries in any order are the same list | exact ordered comparison, with farm required to keep a stable order |
+| 32 | long-poll `wait` (pass 3, agent-grange's choice) | defaults to 30 seconds, its maximum | no default; answer immediately when `wait` is absent |
 
 ## 12. Open items
 
@@ -975,3 +1056,21 @@ grange port. What farm reports is farm's concern (R5.4).
   example corrected after a trace against the rules: the counter in steps 4
   and 7, a crash instead of a clean restart in step 9, and the cursor note at
   the end.
+- **2026-11-18, third review pass.** Points from the review of commit
+  8083d15; the resume clock (R6.22) is still with Don and unchanged here.
+  Plain mode defined in one place (R6.9, 6.1 step 3). Sorted order and the
+  choice of repair peer defined (R6.10). Binding by the most recent exchange
+  in either direction (R6.19). A failed request defined (R6.20). First record
+  delivered by the startup repairs (6.1 step 5). Farm push: reordering is not
+  a change, 1 MiB cap, unknown fields dropped, 400 for malformed input (R5.1,
+  R5.3, R4.4, R9.10, decision 31). Long-poll: default and cap for `wait`, 400
+  for bad values, cursor moves by at least one, caution on `incarnation`
+  (R5.6 to R5.8, decision 32). Board order (R5.5). `leaving` only when
+  accepted (R6.5). Health fields and 403 defined (R5.12 to R5.14). Record cap
+  includes the own record (R5.17). A correction is pushed like a content
+  change (R6.11); the logged address may be a relay (R4.8). `GRANGE_ID` rule,
+  empty means default, keys that must match across a mesh (section 7, 6.1
+  step 2). Host Python for the harness drivers (R8.8, R10.2). No automatic
+  restart (R8.9, decision 30). Restart scenario given a bound (R10.2).
+  Landing rule spelled out (decision 22). Examples corrected to match (4.3
+  steps 1, 7, 9, 10; 6.4 examples 1 to 4, 6, 7).
