@@ -272,12 +272,32 @@ for narration: nothing below compares clocks across machines.
    The process is frozen, so no heartbeat moves and no repair answers. By
    12:31 every peer's seen age for Don passes 60 seconds; they drop him from
    their boards, the cursor moves, and each remembers "I2, counter 1300". At
-   13:15 the lid opens. The ticker sees a 45-minute gap, bumps the counter to
-   1301, and runs a repair immediately. That repair's follow-up push carries
-   Don's body with counter 1301, which beats the remembered 1300, so the peer
-   readmits him and forwards the body; Don is back on every board within a
-   few seconds. On Don's own board the same wake first expires everyone, then
-   the repair response refills the picture.
+   13:15 the lid opens. What happens next depends on whether the stopwatch
+   the grange measures time with, the monotonic clock, kept running while
+   the machine slept. The phase 5 spike measures which it is on each kind of
+   laptop.
+
+   *The stopwatch ran on*, as it does under `docker pause`. The ticker sees
+   a 45-minute gap between two of its runs, bumps the counter, and runs a
+   repair immediately (R6.22). That repair's follow-up push carries Don's
+   body with a counter above the remembered 1300, so the peer readmits him
+   and forwards the body; Don is back on every board within a few seconds.
+   On his own board every teammate's seen age is now 45 minutes, so the wake
+   first expires everyone and the repair response then refills the picture.
+   Farm looks 45 minutes silent as well, so `farm_stale` flips to true until
+   farm's first push after the wake clears it. Both flips are content
+   changes that every board sees.
+
+   *The stopwatch stood still*, which is likely on a real laptop. No gap is
+   seen and nothing special happens. A repair in the first seconds offers
+   Don's body with counter 1300, which does not beat the remembered 1300 and
+   is refused. The next heartbeat, at most 10 seconds away, makes it 1301,
+   and the next repair delivers that, so Don is back on every board within
+   about 13 seconds of his network returning. His own board keeps the
+   picture from before the sleep: the first repair corrects the teammates
+   who are still running, and teammates who left while he slept drop off
+   within 60 seconds. Farm does not look silent, so `farm_stale` does not
+   flip.
 
 9. **Clock was wrong.** Suppose Don's clock was an hour ahead when a grange
    started, giving it an incarnation I3 that is too large, and NTP then fixes
@@ -315,8 +335,10 @@ step 1, when Don's grange first appears, and at steps 2, 4, 6, 7, 8, 9, and
 10, each time Don's content changes or he enters or leaves her picture. It
 never moves for the heartbeats in step 3. In step 5 it is Bob's cursor that
 moves, when he catches up to rev 3; Alice's does not, since she learns
-nothing new. In step 8 Don's own cursor moves as well: once when everyone on
-his board expires, and again when the repair refills it.
+nothing new. In step 8 Don's own cursor moves as well. If the stopwatch ran
+on, it moves when everyone on his board expires and again when the repair
+refills it. If the stopwatch stood still, it moves only for what really
+changed while he slept.
 
 ## 5. Interfaces
 
@@ -682,8 +704,8 @@ seconds, expiry at 60 seconds.
    eleven others still running, and his board refills within a few seconds.
    The lid-closed case is different and is step 8 of the example in 4.3:
    nothing runs while the machine sleeps, so on wake the addresses are
-   unmarked and still hinted online, and the first repair refills the board
-   at once.
+   unmarked and still hinted online, and the first repair brings the board
+   up to date at once.
 
 8. **A device that is not a grange.** A teammate's second laptop is joined to
    the same headscale without `tag:grange`. No grange ever discovers it: it
@@ -911,10 +933,12 @@ grange port. What farm reports is farm's concern (R5.4).
   - a killed grange disappears from all boards within `EXPIRE_SECONDS` plus 15,
     since its last counter can take several repair rounds to reach the last
     peer and each peer's expiry clock starts when it learns that counter;
-  - a grange killed without a `leaving` body and started again within
-    `EXPIRE_SECONDS` has its new incarnation's record on every board within 5
-    seconds of serving again, and is never absent from a board in between
-    (R6.7);
+  - a grange killed without a `leaving` body and serving again within 20
+    seconds of the kill has its new incarnation's record on every board
+    within 5 seconds of serving, and is never absent from a board in between
+    (R6.7). Twenty seconds keeps the old record clear of expiry: at the kill a
+    peer's last refresh can be `HEARTBEAT_SECONDS` plus 15 seconds old, and
+    the new record needs up to 5 more, which totals 50 of the 60 seconds;
   - a grange whose fake farm stops pushing shows `farm_stale` within
     `FARM_STALE_SECONDS` plus 5 and keeps its agents;
   - a `leaving` body removes a grange within 3 seconds;
@@ -995,6 +1019,7 @@ grange port. What farm reports is farm's concern (R5.4).
 | 30 | restart after a reboot (review pass 3, Don) | no automatic restart; `make up` brings the grange back | restart policy on the containers |
 | 31 | comparing farm pushes (pass 3, agent-grange's choice) | the same entries in any order are the same list | exact ordered comparison, with farm required to keep a stable order |
 | 32 | long-poll `wait` (pass 3, agent-grange's choice) | defaults to 30 seconds, its maximum | no default; answer immediately when `wait` is absent |
+| 33 | resume detection, R6.22 (Don, 2026-11-18) | kept; it looks for a jump in the monotonic clock only, and ages follow that clock whatever it does | strike it; also watch the wall clock |
 
 ## 12. Open items
 
@@ -1005,11 +1030,6 @@ grange port. What farm reports is farm's concern (R5.4).
 - The exact local API paths and headers of the Tailscale daemon used for
   discovery and whois, settled by the phase 5 spike against the pinned client
   version.
-- R6.22, resume detection, was added by agent-grange on 2026-11-18 beyond the
-  approved fix list, so that the 5-second readmission bound after unpause in
-  R10.2 is reachable; without it readmission waits for the next heartbeat and
-  repair tick, up to 13 seconds. The alternative is to loosen that bound to
-  `HEARTBEAT_SECONDS` plus `REPAIR_SECONDS` plus 5. Don to confirm or strike.
 
 ## 13. Revision history
 
@@ -1057,7 +1077,9 @@ grange port. What farm reports is farm's concern (R5.4).
   and 7, a crash instead of a clean restart in step 9, and the cursor note at
   the end.
 - **2026-11-18, third review pass.** Points from the review of commit
-  8083d15; the resume clock (R6.22) is still with Don and unchanged here.
+  8083d15. Don confirmed R6.22 as written, watching the monotonic clock only
+  (decision 33), and its open item is closed; step 8 of 4.3 now covers both
+  a clock that runs on through sleep and one that stands still.
   Plain mode defined in one place (R6.9, 6.1 step 3). Sorted order and the
   choice of repair peer defined (R6.10). Binding by the most recent exchange
   in either direction (R6.19). A failed request defined (R6.20). First record
@@ -1073,4 +1095,4 @@ grange port. What farm reports is farm's concern (R5.4).
   step 2). Host Python for the harness drivers (R8.8, R10.2). No automatic
   restart (R8.9, decision 30). Restart scenario given a bound (R10.2).
   Landing rule spelled out (decision 22). Examples corrected to match (4.3
-  steps 1, 7, 9, 10; 6.4 examples 1 to 4, 6, 7).
+  steps 1 and 7 to 10; 6.4 examples 1 to 4, 6, 7).

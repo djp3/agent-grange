@@ -58,10 +58,6 @@ S is a sitting, M a day, L two to three days, as rough relative sizes.
 - No organization name anywhere in the repo, the documents, or the code
   (R3.9).
 - Nothing before phase 8 depends on the team's control server (R9.0).
-- R6.22, resume detection, is an open item in the requirements. The plan
-  builds it as written. If Don strikes it, the resume items in phases 2 to 4
-  go, and the unpause bound in phase 4 becomes `HEARTBEAT_SECONDS` plus
-  `REPAIR_SECONDS` plus 5.
 
 ## Phase 0: rename, fixed port, layout, test runner
 
@@ -249,10 +245,9 @@ wrapper so a stale image refuses these routes too (R5.16).
   unchanged (R5.15).
 - `ticker.py`: a one-second thread that runs `expire()` and re-evaluates the
   local `farm_stale`, so time-driven transitions move the cursor before the
-  gossip scheduler exists. It measures the gap since its previous run through
-  one function and signals a resume when the gap is longer than 5 seconds
-  (R6.22); phase 3 acts on the signal. Which clock that function reads is
-  settled by the phase 5 spike (see Risks).
+  gossip scheduler exists. It records the monotonic time of each run and
+  signals a resume when the gap since the previous run is longer than 5
+  seconds (R6.22); phase 3 acts on the signal.
 - Binding: two listeners with one handler, on loopback and on the container's
   bridge address found from the default route; never all interfaces (startup
   step 4). Today's server binds every interface.
@@ -396,7 +391,7 @@ Docker, polls the five boards, and asserts the R10.2 list:
 |---|---|
 | change on one grange | visible on all five `/v1/agents` within 5 s |
 | kill one grange | gone from all boards within `EXPIRE_SECONDS` plus 15 s |
-| kill without a `leaving` body, start again within `EXPIRE_SECONDS` | new incarnation on all boards within 5 s of serving again; never absent from a board in between |
+| kill without a `leaving` body, serving again within 20 s of the kill | new incarnation on all boards within 5 s of serving; never absent from a board in between |
 | fake farm goes silent | `farm_stale` true within `FARM_STALE_SECONDS` plus 5 s, agents still listed |
 | clean stop | gone from all boards within 3 s |
 | pause past `EXPIRE_SECONDS`, then unpause | removed, then readmitted within 5 s of unpause |
@@ -443,8 +438,10 @@ confirm and write down:
   reachable from the host or the bridge network (R3.4);
 - how long after a sidecar stops the daemon's online hint for it turns
   offline, which the live-set rules tolerate but the examples in 6.4 describe;
-- which clock shows a gap after `docker pause`, after the Mac sleeps, and
-  after a Linux laptop suspends: monotonic, wall, or neither (R6.22);
+- whether the monotonic clock shows a gap after `docker pause`, after the
+  Mac sleeps, and after a Linux laptop suspends, so Don knows where the
+  resume rule of R6.22 fires. This is information for him, not a pending
+  change;
 - with the headscale container stopped: whether two joined granges keep
   gossiping, and whether the daemon still answers status and whois, before
   and after a sidecar restart. No requirement covers a control server outage;
@@ -588,16 +585,14 @@ Prerequisite outside this repo: the team's headscale server, stood up from
 ## Risks and how the plan handles them
 
 - **Resume detection may not fire on a real laptop (R6.22).** The requirement
-  looks for a gap in the monotonic clock. `docker pause` produces one, but on
-  Linux the monotonic clock does not advance while the machine is suspended,
-  and a suspended Docker Desktop virtual machine may behave the same way. If
-  so, a laptop that wakes falls back to readmission by its next heartbeat and
-  repair, up to about 13 seconds, and only the harness sees the fast path.
-  The ticker reads its gap through one function, the spike finds which clock
-  shows the gap on each runtime, and phase 8 times a real sleep and wake. If
-  the monotonic clock is the wrong one, the wording of R6.22 goes back to Don
-  before 5.2 ends; a likely replacement is wall-clock time advancing more
-  than the monotonic clock did.
+  looks for a gap in the monotonic clock only, by Don's decision (decision
+  33). `docker pause` produces one, but on Linux the monotonic clock does not
+  advance while the machine is suspended, and a suspended Docker Desktop
+  virtual machine may behave the same way. If so, a laptop that wakes falls
+  back to readmission by its next heartbeat and repair, up to about 13
+  seconds, and only the harness sees the fast path. That is accepted. The
+  spike measures the clock on each runtime and phase 8 times a real sleep and
+  wake, so the actual delay is known before rollout.
 - **Tailscale local API details** (headers, endpoint shapes, socket sharing,
   non-root access): the phase 5.1 spike settles them against the local stack
   before any code depends on them.
