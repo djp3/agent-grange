@@ -78,7 +78,7 @@ test-host:           ## the same unit tests on the host interpreter; optional fa
 test-sim: TEST_ENV = -e GRANGE_SIM=long
 test-sim: build      ## the hour-long simulations at design size (R10.5), inside the image
 	$(TEST_RUN) -m unittest -v sim.test_design_size
-test-plain:          ## five granges on a plain Docker network (phase 4)
-	@echo "test-plain: not built yet (plan phase 4)"; exit 1
+test-plain: build    ## five granges on a plain Docker network, scripted scenarios (R10.2); several minutes
+	python3 tools/scenario.py
 test-headscale:      ## local headscale, sidecars, tag discovery (phase 6)
 	@echo "test-headscale: not built yet (plan phase 6)"; exit 1

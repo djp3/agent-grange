@@ -1,0 +1,86 @@
+# Plain-network harness (R10.2, R6.9): five granges on one ordinary Docker
+# network, peers listed in GRANGE_PEERS, no tailnet. For testing only; a mesh
+# that carries real status never runs in plain mode.
+#
+# Driven by `make test-plain` (tools/scenario.py). Uses the image `make build`
+# made, so the git metadata is baked in. Each local API is published on its own
+# loopback port away from 7788, so a real grange on this machine is undisturbed.
+# grange-e checks freshness against the mock GitHub for the stale scenario; the
+# others skip the check. No restart policy (R8.9).
+name: agent-grange-plain
+
+x-grange: &grange
+  image: agent-grange:local
+  healthcheck:
+    test: ["CMD", "python3", "/app/healthcheck.py"]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    start_period: 75s
+    start_interval: 1s
+
+x-env: &env
+  SKIP_FRESHNESS_CHECK: "1"
+  FANOUT: ${PLAIN_FANOUT:-}
+
+services:
+  grange-a:
+    <<: *grange
+    hostname: grange-a
+    ports: ["127.0.0.1:17881:8080"]
+    environment:
+      <<: *env
+      GRANGE_ID: grange-a
+      GRANGE_PEERS: grange-b:7789,grange-c:7789,grange-d:7789,grange-e:7789
+
+  grange-b:
+    <<: *grange
+    hostname: grange-b
+    ports: ["127.0.0.1:17882:8080"]
+    environment:
+      <<: *env
+      GRANGE_ID: grange-b
+      GRANGE_PEERS: grange-a:7789,grange-c:7789,grange-d:7789,grange-e:7789
+
+  grange-c:
+    <<: *grange
+    hostname: grange-c
+    ports: ["127.0.0.1:17883:8080"]
+    environment:
+      <<: *env
+      GRANGE_ID: grange-c
+      GRANGE_PEERS: grange-a:7789,grange-b:7789,grange-d:7789,grange-e:7789
+
+  grange-d:
+    <<: *grange
+    hostname: grange-d
+    ports: ["127.0.0.1:17884:8080"]
+    environment:
+      <<: *env
+      GRANGE_ID: grange-d
+      GRANGE_PEERS: grange-a:7789,grange-b:7789,grange-c:7789,grange-e:7789
+
+  grange-e:
+    <<: *grange
+    hostname: grange-e
+    ports: ["127.0.0.1:17885:8080"]
+    depends_on:
+      mock-github:
+        condition: service_started
+    environment:
+      <<: *env
+      GRANGE_ID: grange-e
+      GRANGE_PEERS: grange-a:7789,grange-b:7789,grange-c:7789,grange-d:7789
+      SKIP_FRESHNESS_CHECK: "0"
+      FRESHNESS_STRICT: "1"
+      CHECK_TAG: agent-grange-latest
+      GITHUB_API_URL: http://mock-github:8000
+      RECHECK_SECONDS: "2"
+
+  mock-github:
+    image: agent-grange:local
+    entrypoint: ["python3", "/tools/mock_github.py", "--port", "8000"]
+    volumes: ["./tools:/tools:ro"]
+    ports: ["127.0.0.1:17890:8000"]
+    environment:
+      MOCK_TAG_SHA: ${PLAIN_COMMIT:-0000000000000000000000000000000000000000}
