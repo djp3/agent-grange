@@ -5,7 +5,7 @@ Python script finds the container through the Docker Engine API, reads the port
 Docker assigned, and queries the server. Nothing is hardcoded except a label.
 
 The container also refuses to start if the commit it was built from is older
-than the commit the `agentic-grange-latest` tag points to on GitHub, and while
+than the commit the `agent-grange-latest` tag points to on GitHub, and while
 running it re-checks periodically: if the tag moves past it, every route answers
 503 and Docker marks it unhealthy (see "Freshness check" below).
 
@@ -40,7 +40,7 @@ exported as build args. An image built with plain `docker compose build` has
 To see the port the hard way:
 
 ```bash
-docker compose port web 8080
+docker compose port grange 8080
 ```
 
 ## How discovery works
@@ -64,7 +64,7 @@ Problem: each developer updates with `git pull` and then (ideally) `make up`.
 If they skip either step they run stale code and nothing tells them.
 
 The team marks the current blessed commit with a moving git tag,
-`agentic-grange-latest`. Every container start compares itself to that tag.
+`agent-grange-latest`. Every container start compares itself to that tag.
 
 **Build time** (`Makefile` -> compose build args -> Dockerfile `ARG`/`ENV`):
 
@@ -147,8 +147,8 @@ The tag is the team's "this is current" pointer. Advance it when a commit is
 ready for everyone:
 
 ```bash
-git tag -f agentic-grange-latest <commit>
-git push -f origin agentic-grange-latest
+git tag -f agent-grange-latest <commit>
+git push -f origin agent-grange-latest
 ```
 
 A moving tag needs force-push, so either restrict who may push it (GitHub tag

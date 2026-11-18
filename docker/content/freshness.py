@@ -81,7 +81,7 @@ class GitHub:
         """
         req = urllib.request.Request(f"{self.api}{path}", headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": "agentic-grange-freshness-check",
+            "User-Agent": "agent-grange-freshness-check",
             "X-GitHub-Api-Version": "2022-11-28",
         })
         if self.token:
@@ -140,7 +140,7 @@ def assess(cfg: Config, gh: "GitHub | None" = None) -> Result:
                       ["Run `make build` or `make up`."])
     if not cfg.tag:
         return Result(Verdict.NO_METADATA,
-                      "CHECK_TAG is empty; set it in docker-compose.yml, e.g. agentic-grange-latest")
+                      "CHECK_TAG is empty; set it in docker-compose.yml, e.g. agent-grange-latest")
 
     gh = gh or GitHub(cfg.api, cfg.token, cfg.repo)
     try:

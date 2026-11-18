@@ -18,7 +18,7 @@ export GIT_PUSHED_BASE
 
 # Which tag the container checks itself against at launch. Same default as
 # docker-compose.yml; defined here too so the summary below can show it.
-CHECK_TAG ?= agentic-grange-latest
+CHECK_TAG ?= agent-grange-latest
 export CHECK_TAG
 
 # Runtime: GitHub token so the container can query a private repo. If the
@@ -55,7 +55,7 @@ build: git-status   ## build the image only
 down: git-status
 	docker compose down
 logs: git-status
-	@docker compose logs --no-log-prefix web
+	@docker compose logs --no-log-prefix grange
 ps: git-status
 	@docker compose ps -a
 info: git-status    ## just the summary
