@@ -1,0 +1,60 @@
+# The same targets a laptop runs (R8.8). All of them need only Docker and a
+# host Python, and none contacts the real freshness endpoint: make test and
+# make test-sim bypass the entrypoint, and make test-plain skips the check
+# except on the one grange that talks to the mock GitHub.
+#
+# No workflow ever moves the agent-grange-latest tag; that is done by hand
+# (decision 23).
+name: ci
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: make test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the Makefile reads the pushed base from history
+      - run: make -C docker test
+
+  test-sim:
+    name: make test-sim
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: make -C docker test-sim
+
+  test-plain:
+    name: make test-plain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: make -C docker test-plain
+
+  # Optional (plan phase 7): runs if the hosted runner allows /dev/net/tun,
+  # which would keep Docker Engine on Linux covered on every push. Not yet
+  # seen green, so it does not fail the workflow.
+  test-headscale:
+    name: make test-headscale (optional)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: test -c /dev/net/tun && echo "tun device present"
+      - run: make -C docker test-headscale

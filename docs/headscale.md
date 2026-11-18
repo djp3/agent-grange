@@ -165,7 +165,7 @@ throwaway CA, the policy above, and Tailscale sidecars on one Docker network.
 | gossip port unreachable from host and bridge network | yes: refused on the bridge address, no route to the tailnet address | not yet run |
 | ACL allows only the gossip port between tagged nodes | yes: 7789 connects, 8000 times out | not yet run |
 | online hint after a sidecar stops or is killed | offline after 12 s; back 2 to 3 s after a restart | not yet run |
-| online hint after a sidecar is paused | still online after 7 minutes; see below | not yet run |
+| online hint after a sidecar is paused | still online after 30 minutes; see below | not yet run |
 | monotonic clock across `docker pause` | gap shown: 12.1 s, same as the wall clock | not yet run |
 | monotonic clock across a machine sleep or suspend | not measured; timed in the phase 8 smoke test | not yet run |
 | headscale stopped: joined granges keep gossiping | yes, changes still arrive at once | not yet run |
@@ -195,11 +195,16 @@ above are to be repeated on Docker Engine on Linux before the smoke test, and
   tag comes only through the pre-auth key in `.env`. `TS_TAG` is still the
   grange's discovery filter. The wording of R8.1, and the plan's note that
   compose consumes `TS_TAG`, could say so.
-- **A frozen machine stays "online" for a long time.** A paused sidecar was
-  still reported online after 7 minutes; the longer measurement is recorded
-  below. The live-set rules already allow for this: failed marks keep the
-  address out between discovery refreshes, and 6.4 example 5 describes it.
-  The cost is at most one failed attempt per refresh while the hint lags.
+- **A frozen machine stays "online" for a long time.** A sidecar under
+  `docker pause` was still reported online after 30 minutes, the length of
+  the measurement. `docker pause` freezes the process but leaves the kernel
+  answering on its open connection to headscale, so this is the worst case
+  rather than a closed laptop, which drops off the network; the hint on a real
+  sleep is to be watched in the phase 8 smoke test. The live-set rules allow
+  for a hint that lags: failed marks keep the address out between discovery
+  refreshes, as 6.4 example 5 describes, at a cost of at most one failed
+  attempt per refresh, and expiry removes the record after 60 seconds either
+  way.
 - **A control server outage.** No requirement covers it. What the spike saw:
   running granges are unaffected; a sidecar that restarts during the outage
   cannot get a network map until headscale returns; its grange waits up to
