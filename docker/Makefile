@@ -68,15 +68,16 @@ update: git-status  ## what to run when a container reports it is out of date
 # tests/ bind-mounted read-only and the entrypoint (freshness check) bypassed.
 IMAGE      := agent-grange:local
 TEST_RUN    = docker run --rm --entrypoint python3 \
-                -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/app \
+                -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/app $(TEST_ENV) \
                 -v "$(CURDIR)/tests:/tests:ro" -w /tests $(IMAGE)
 
 test: build          ## unit tests and the short simulation, inside the image
 	$(TEST_RUN) -m unittest discover -s /tests -t /tests
 test-host:           ## the same unit tests on the host interpreter; optional fast loop
 	cd content && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ../tests -t ../tests
-test-sim:            ## hour-long simulations at design size (phase 3)
-	@echo "test-sim: not built yet (plan phase 3)"; exit 1
+test-sim: TEST_ENV = -e GRANGE_SIM=long
+test-sim: build      ## the hour-long simulations at design size (R10.5), inside the image
+	$(TEST_RUN) -m unittest -v sim.test_design_size
 test-plain:          ## five granges on a plain Docker network (phase 4)
 	@echo "test-plain: not built yet (plan phase 4)"; exit 1
 test-headscale:      ## local headscale, sidecars, tag discovery (phase 6)

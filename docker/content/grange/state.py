@@ -72,6 +72,7 @@ class Store:
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)
         self._listeners: list = []
+        self._batch_listeners: list = []
 
         now = clock.monotonic()
         self.cursor = 1                                  # R5.8: starts again from 1
@@ -102,12 +103,22 @@ class Store:
         return self.cfg.grange_id
 
     def subscribe(self, fn: Callable[[Event], None]) -> None:
+        """fn(event), once per event."""
         self._listeners.append(fn)
 
+    def subscribe_batch(self, fn: Callable[[list], None]) -> None:
+        """fn(events), once per operation that produced any: one repair
+        response that brings many bodies becomes one push per neighbour."""
+        self._batch_listeners.append(fn)
+
     def _dispatch(self, events: list) -> None:
+        if not events:
+            return
         for ev in events:
             for fn in list(self._listeners):
                 fn(ev)
+        for fn in list(self._batch_listeners):
+            fn(list(events))
 
     def _move_cursor(self) -> None:
         self.cursor += 1
@@ -342,8 +353,13 @@ class Store:
             return self._digest(self._now())
 
     def _digest(self, now: float) -> dict:
-        return {gid: DigestEntry(r.incarnation, r.counter, r.rev, r.farm_age_s)
-                for gid, r in self._entries(now).items()}
+        own_age = self._own_farm_age(now)
+        out = {self.grange_id: DigestEntry(self.incarnation, self.counter, self.rev, own_age)}
+        for gid in sorted(self._peers):
+            p = self._peers[gid]
+            age = None if p.farm_age_s is None else p.farm_age_s + max(0.0, now - p.farm_age_at)
+            out[gid] = DigestEntry(p.body.incarnation, p.counter, p.body.rev, age)
+        return out
 
     def body(self, gid: str) -> Optional[Record]:
         """The stamped body held for an id, own included, or None."""
@@ -393,6 +409,19 @@ class Store:
     def push_message(self, records: list) -> GossipMessage:
         return self.trim(None, list(records))
 
+    def push_messages(self, records: list) -> list:
+        """Push messages carrying all of `records`, split to fit the caps."""
+        out, remaining = [], list(records)
+        while remaining:
+            msg = self.trim(None, remaining)
+            if not msg.records:
+                self.log(f"push: {len(remaining)} body(ies) too large for one message; dropped")
+                break
+            out.append(msg)
+            sent = {id(r) for r in msg.records}
+            remaining = [r for r in remaining if id(r) not in sent]
+        return out
+
     def repair_request(self) -> GossipMessage:
         with self._lock:
             return self._message(self._digest(self._now()), [])
@@ -435,6 +464,11 @@ class Store:
     def is_live_record(self, gid: str) -> bool:
         with self._lock:
             return gid in self._peers
+
+    def peer_id_set(self) -> set:
+        """Ids with an unexpired record, for the live set (R6.10)."""
+        with self._lock:
+            return set(self._peers)
 
     def peer_ids(self) -> list:
         with self._lock:

@@ -16,10 +16,12 @@ from .config import RESUME_GAP_SECONDS
 
 class Ticker:
     def __init__(self, store, clock, on_resume: Optional[Callable[[float], None]] = None,
-                 interval: float = 1.0, gap: float = RESUME_GAP_SECONDS, log=None):
+                 interval: float = 1.0, gap: float = RESUME_GAP_SECONDS, log=None,
+                 on_expire: Optional[Callable[[list], None]] = None):
         self.store = store
         self.clock = clock
         self.on_resume = on_resume
+        self.on_expire = on_expire
         self.interval = interval
         self.gap = gap
         self.log = log or (lambda m: print(m, file=sys.stderr, flush=True))
@@ -33,7 +35,9 @@ class Ticker:
         now = self.clock.monotonic()
         gap = now - self.last_run
         self.last_run = now
-        self.store.expire()
+        gone = self.store.expire()
+        if gone and self.on_expire is not None:
+            self.on_expire(gone)
         resumed = gap > self.gap
         if resumed:
             self.resumes += 1
