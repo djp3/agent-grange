@@ -80,5 +80,5 @@ test-sim: build      ## the hour-long simulations at design size (R10.5), inside
 	$(TEST_RUN) -m unittest -v sim.test_design_size
 test-plain: build    ## five granges on a plain Docker network, scripted scenarios (R10.2); several minutes
 	python3 tools/scenario.py
-test-headscale:      ## local headscale, sidecars, tag discovery (phase 6)
-	@echo "test-headscale: not built yet (plan phase 6)"; exit 1
+test-headscale: build  ## local headscale, three sidecar and grange pairs, an untagged device (R10.3)
+	python3 tools/headscale_scenario.py
