@@ -19,6 +19,23 @@ services:
     labels:
       agent-grange.service: grange
     environment:
+      # Grange keys from .env (section 7). Empty means the default, which lives
+      # in content/grange/config.py and is not repeated here.
+      GRANGE_ID: ${GRANGE_ID:-}
+      GRANGE_GOSSIP_PORT: ${GRANGE_GOSSIP_PORT:-}
+      GRANGE_GROUP: ${GRANGE_GROUP:-}
+      TS_TAG: ${TS_TAG:-}
+      GRANGE_PEERS: ${GRANGE_PEERS:-}
+      HEARTBEAT_SECONDS: ${HEARTBEAT_SECONDS:-}
+      FARM_STALE_SECONDS: ${FARM_STALE_SECONDS:-}
+      EXPIRE_SECONDS: ${EXPIRE_SECONDS:-}
+      FORGET_SECONDS: ${FORGET_SECONDS:-}
+      REPAIR_SECONDS: ${REPAIR_SECONDS:-}
+      DISCOVERY_SECONDS: ${DISCOVERY_SECONDS:-}
+      FANOUT: ${FANOUT:-}
+      CONNECT_TIMEOUT_SECONDS: ${CONNECT_TIMEOUT_SECONDS:-}
+      EXCHANGE_TIMEOUT_SECONDS: ${EXCHANGE_TIMEOUT_SECONDS:-}
+
       # needed for private repos
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
 
@@ -38,11 +55,14 @@ services:
       RECHECK_SECONDS: ${RECHECK_SECONDS:-30}
 
     # healthcheck.py prints why /health failed, so the reason lands in Docker's health log.
-    # Startup failures are forgiven during start_period; after that 3 misses = unhealthy.
+    # Startup failures are forgiven during start_period, which covers the 60-second
+    # tailnet wait plus startup (R6.1, R8.1); after that 3 misses = unhealthy.
+    # No restart policy, here or on any service (R8.9).
     healthcheck:
       test: ["CMD", "python3", "/app/healthcheck.py"]
       interval: 2s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 75s
+      start_interval: 1s
 
