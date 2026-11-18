@@ -449,8 +449,8 @@ confirm and write down:
 
 Findings go into `docs/headscale.md`, which in this phase also becomes the
 admin runbook from section 9.1: policy snippet, create key, expire key, delete
-node, what to tell a new teammate. The runbook is delivered here so whoever
-stands up the team server has it before phase 8 (R9.0).
+node, what to tell a new teammate. The runbook is delivered here so Don has
+it before he stands up the team server (R9.0).
 
 **5.2 Sidecar integration.**
 
@@ -517,8 +517,8 @@ sidecar without the tag (R10.3). `make test-headscale` runs:
 
 ## Phase 8: rollout
 
-Prerequisite outside this repo: the team's headscale server, stood up from
-`docs/headscale.md`. No owner or date yet (R9.0).
+Prerequisite outside this repo: the team's headscale server, stood up by Don
+from `docs/headscale.md`. No date yet (R9.0).
 
 1. Smoke test across two real machines, one per supported runtime where
    available, against the team's headscale (R10.4). It includes one real
@@ -544,7 +544,7 @@ Prerequisite outside this repo: the team's headscale server, stood up from
 |---|---|---|
 | Don | approve the two tag pushes in phase 0, in the session doing the work; say when `main` is fast-forwarded and when it is pushed | 0 onward |
 | Don | provide a Linux host with Docker Engine for the spike and the smoke test | 5 |
-| unassigned | stand up the team headscale server from the runbook | 8 |
+| Don | stand up the team headscale server from the runbook; no date yet | 8 |
 | headscale admin | define the tag and ACL, issue a key | 8 |
 | agent-farm | push to `PUT /v1/farm` on change and every 30 s; grange port setting | 8 |
 | agent-frolic | long-poll `GET /v1/agents`, map states, draw `farm_stale` and ages | 8 |

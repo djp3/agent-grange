@@ -865,12 +865,12 @@ grange port. What farm reports is farm's concern (R5.4).
 
 ### 9.1 What headscale must provide
 
-- **R9.0** As of 2026-11-17 no team headscale server exists. Standing one up
-  is a work item outside this repo with no owner yet. It is needed only by the
-  phase 8 smoke test (R10.4). Nothing before phase 8 may depend on it; all
-  earlier testing uses the headscale container in this repo. The runbook
-  (`docs/headscale.md`) is delivered in phase 5 so whoever stands up the team
-  server has it.
+- **R9.0** As of 2026-11-18 no team headscale server exists. Standing one up
+  is a work item outside this repo. Don will do it; no date is set. It is
+  needed only by the phase 8 smoke test (R10.4). Nothing before phase 8 may
+  depend on it; all earlier testing uses the headscale container in this
+  repo. The runbook (`docs/headscale.md`) is delivered in phase 5 so he has
+  it when he stands the server up.
 - **R9.1** The tag `tag:grange` is defined in the policy, owned by the admin.
 - **R9.2** One ACL rule: sources with `tag:grange` may reach destinations with
   `tag:grange` on `GRANGE_GOSSIP_PORT`. Nothing else is granted to or from the
@@ -1007,7 +1007,7 @@ grange port. What farm reports is farm's concern (R5.4).
 | 18 | mesh secret | none; tailnet identity | shared token; key list via gossip; key id via kill-switch |
 | 19 | version split (review D1) | `rev` for content, `counter` for liveness, both in the digest | one counter for both |
 | 20 | contract handoff (D2) | phase 8, as planned | earlier handoff |
-| 21 | team control server (D3) | outside this repo; needed only by phase 8 | deployment in repo |
+| 21 | team control server (D3; owner settled 2026-11-18) | outside this repo; needed only by phase 8; Don stands it up, date open | deployment in repo |
 | 22 | how work lands (D4; landing rule spelled out 2026-11-18) | plain commits on `main` once tests pass; no pull requests, no merge commits; from a worktree branch, `main` is fast-forwarded at the end of each phase on Don's word and pushed only on his word | pull requests |
 | 23 | moving the tag (D5) | by hand | GitHub Actions on merge |
 | 24 | runtimes (D6) | Docker Desktop for Mac and Docker Engine on Linux | Mac only |
@@ -1017,13 +1017,15 @@ grange port. What farm reports is farm's concern (R5.4).
 | 28 | test runner (review pass 2) | the built image with tests bind-mounted; host run optional | host interpreter |
 | 29 | incarnation healing after expiry (pass 2, agent-grange's choice) | claim narrowed: heals while a peer still holds the old record, otherwise absent until `FORGET_SECONDS` pass | list remembered versions in digests, which needs a marker so they are not merged as live |
 | 30 | restart after a reboot (review pass 3, Don) | no automatic restart; `make up` brings the grange back | restart policy on the containers |
-| 31 | comparing farm pushes (pass 3, agent-grange's choice) | the same entries in any order are the same list | exact ordered comparison, with farm required to keep a stable order |
-| 32 | long-poll `wait` (pass 3, agent-grange's choice) | defaults to 30 seconds, its maximum | no default; answer immediately when `wait` is absent |
+| 31 | comparing farm pushes (pass 3; confirmed by Don 2026-11-18) | the same entries in any order are the same list | exact ordered comparison, with farm required to keep a stable order |
+| 32 | long-poll `wait` (pass 3; confirmed by Don 2026-11-18) | defaults to 30 seconds, its maximum | no default; answer immediately when `wait` is absent |
 | 33 | resume detection, R6.22 (Don, 2026-11-18) | kept; it looks for a jump in the monotonic clock only, and ages follow that clock whatever it does | strike it; also watch the wall clock |
+| 34 | `GRANGE_ID` rule (pass 3; confirmed by Don 2026-11-18) | 1 to 56 characters from lowercase letters, digits, and hyphens, no leading or trailing hyphen | any string, refusing only a missing id |
 
 ## 12. Open items
 
-- Who stands up the team headscale server, and when. Needed before phase 8.
+- When Don stands up the team headscale server. He owns it; no date is set.
+  Needed before phase 8.
 - Don's go-ahead, in the session doing the work, for the two pushes in the
   phase 0 rename: creating `agent-grange-latest` on origin and later deleting
   `agentic-grange-latest`.
@@ -1096,3 +1098,8 @@ grange port. What farm reports is farm's concern (R5.4).
   restart (R8.9, decision 30). Restart scenario given a bound (R10.2).
   Landing rule spelled out (decision 22). Examples corrected to match (4.3
   steps 1 and 7 to 10; 6.4 examples 1 to 4, 6, 7).
+- **2026-11-18, after the third pass.** Don confirmed the three choices made
+  in that pass: farm pushes compared without regard to order (decision 31),
+  the 30-second default `wait` (decision 32), and the `GRANGE_ID` rule
+  (decision 34). He also took on standing up the team headscale server, with
+  no date yet (R9.0, decision 21, open items).
