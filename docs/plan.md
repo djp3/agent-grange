@@ -2,9 +2,9 @@
 
 Companion to `requirements.md`; requirement numbers below refer to it.
 Rewritten 2026-11-18 against the requirements as they stood during Don's
-manual review, and revised the same day after a third review pass. Not
-approved: phase 0 starts only on Don's word. Where this plan and the
-requirements disagree, the requirements win and the plan is corrected.
+manual review, and revised the same day after a third review pass. Approved
+by Don on 2026-11-18. Where this plan and the requirements disagree, the
+requirements win and the plan is corrected.
 
 Nine phases, 0 to 8, each ending in something that runs and is checked.
 Phases 0 to 4 need no tailnet and no control server, so they are built and

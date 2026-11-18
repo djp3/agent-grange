@@ -1,7 +1,7 @@
 # agent-grange v1 requirements
 
-Status: currently under review by Don Patterson
-Execution plan: `docs/plan.md`, rewritten 2026-11-18 against this document.
+Status: approved by Don Patterson on 2026-11-18.
+Execution plan: `docs/plan.md`, approved the same day.
 
 ## 1. Purpose
 
@@ -1105,3 +1105,5 @@ grange port. What farm reports is farm's concern (R5.4).
   no date yet (R9.0, decision 21, open items), and confirmed the narrowed
   healing claim of R4.8 (decision 29). No decision in the log is left
   unconfirmed.
+- **2026-11-18, approval.** Don approved this document and the plan as they
+  stood at commit bb67d00. Only the status lines changed after that.
