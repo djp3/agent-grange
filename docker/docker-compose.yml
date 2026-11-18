@@ -14,7 +14,7 @@ services:
     ports:
       - "127.0.0.1::8080"
     labels:
-      ai.ledgerlink.agentic-grange: agentic-grange
+      agent-grange.service: grange
     environment:
       # needed for private repos
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}

@@ -47,7 +47,7 @@ docker compose port web 8080
 
 1. `query_server.py` opens the Docker Unix socket (`DOCKER_HOST`, then
    `/var/run/docker.sock`, then `~/.docker/run/docker.sock`).
-2. `GET /containers/json?filters={"label":["ai.ledgerlink.agentic-grange=agentic-grange"],"health":["healthy"]}`
+2. `GET /containers/json?filters={"label":["agent-grange.service=grange"],"health":["healthy"]}`
    returns only containers that carry our label **and** have passed their healthcheck.
 3. The entry's `Ports` array holds `PrivatePort: 8080 -> PublicPort: <random>`.
    The script takes the IPv4 binding and connects to `127.0.0.1:<random>`.

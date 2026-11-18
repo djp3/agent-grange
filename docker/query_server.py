@@ -18,7 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 
-LABEL = "ai.ledgerlink.agentic-grange=agentic-grange"
+LABEL = "agent-grange.service=grange"
 CONTAINER_PORT = 8080
 TIMEOUT_SECONDS = float(os.environ.get("DISCOVERY_TIMEOUT", "60"))
 
