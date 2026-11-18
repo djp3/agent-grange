@@ -91,6 +91,7 @@ class Core:
         self.leaving = False
         self.outstanding = 0                # requests in flight
         self.startup_pending = 0
+        self.startup_ok = 0
         self.sent = {"push": 0, "repair": 0, "probe": 0}
 
         now = clock.monotonic()
@@ -317,10 +318,13 @@ class Core:
         targets = self.neighbours()[: self.cfg.fanout]
         with self._lock:
             self.startup_pending = len(targets)
+            self.startup_ok = 0
 
-        def one_done(_result):
+        def one_done(result):
             with self._lock:
                 self.startup_pending -= 1
+                if result is not None and result.ok:
+                    self.startup_ok += 1
         for addr in targets:
             if self._can_send():
                 self.repair(addr, on_done=one_done)

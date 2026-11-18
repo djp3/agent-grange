@@ -1,0 +1,15 @@
+// TEST ONLY. Never use this on a real server. It opens the ACL to every
+// device, so the untagged device can reach a gossip port and the grange's
+// whois check (R5.13) alone must reject it (R10.3, plan phase 6).
+{
+  "tagOwners": {
+    "tag:grange": [],
+  },
+  "grants": [
+    {
+      "src": ["*"],
+      "dst": ["*"],
+      "ip": ["*"],
+    },
+  ],
+}

@@ -28,6 +28,7 @@ WAIT_MAX_SECONDS = 30.0         # R5.7: long-poll wait default and maximum
 STARTUP_REPAIR_SECONDS = 5.0    # 6.1 step 5
 LEAVE_WAIT_SECONDS = 2.0        # R6.16
 TAILNET_WAIT_SECONDS = 60.0     # 6.1 step 3
+TS_SOCKET_PATH = "/var/run/tailscale/tailscaled.sock"   # where compose mounts the sidecar's socket
 
 EX_CONFIG = 78                  # same exit code as the freshness refusal
 

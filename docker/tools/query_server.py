@@ -22,7 +22,9 @@ import time
 import urllib.parse
 import urllib.request
 
-LABEL = "agent-grange.service=grange"
+# The sidecar owns the published port (R8.1): the grange shares its network
+# namespace, so the binding to discover is on the tailscale service.
+LABEL = "agent-grange.service=tailscale"
 CONTAINER_PORT = 8080
 TIMEOUT_SECONDS = float(os.environ.get("DISCOVERY_TIMEOUT", "60"))
 

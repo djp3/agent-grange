@@ -1,4 +1,10 @@
 FROM python:3.12-slim
+
+# A non-root user (R8.7). The phase 5 spike confirmed that the sidecar's shared
+# daemon socket answers status and whois for a non-root caller. Nothing is
+# installed: the image stays the standard library only (R8.2).
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin grange
+
 WORKDIR /app
 COPY content/ ./
 
@@ -15,5 +21,6 @@ LABEL org.opencontainers.image.revision=$GIT_COMMIT \
 
 ENV PORT=8080
 EXPOSE 8080
+USER grange
 ENTRYPOINT ["python3", "/app/entrypoint.py"]
 CMD ["python3", "server.py"]

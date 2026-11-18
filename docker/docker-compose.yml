@@ -1,7 +1,54 @@
-# Build with `make up` or `make build` to capture required environment variables.
+# One grange: a Tailscale client sidecar and the grange in its network
+# namespace (R3.2, R8.1). Fill in .env from .env.example, then `make up`.
+# Build with `make up` or `make build` to capture the git metadata.
+#
+#   tailscale  joins the tailnet with the tagged pre-auth key, keeps its device
+#              identity in a named volume, and publishes the grange's local API
+#              on 127.0.0.1:${GRANGE_PORT} only (R3.3). The gossip port is never
+#              published (R3.4).
+#   grange     shares the sidecar's network namespace and reads its daemon
+#              socket for discovery and identity checks (R6.8, R5.13).
+#
+# No restart policy on either service: after a reboot or a Docker restart the
+# grange stays down until `make up` (R8.9).
 name: agent-grange
 
 services:
+  tailscale:
+    image: tailscale/tailscale:v1.104.7
+    hostname: grange-${GRANGE_ID:-unset}
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      # The tag comes with the pre-auth key (R9.3). The sidecar must not also
+      # request it: with tag:grange owned by the admin alone (R9.1), headscale
+      # refuses the registration (found in the phase 5 spike, docs/headscale.md).
+      TS_EXTRA_ARGS: --login-server=${HEADSCALE_URL:-}
+      TS_HOSTNAME: grange-${GRANGE_ID:-unset}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      TS_USERSPACE: "false"
+      TS_ACCEPT_DNS: "false"
+      TS_AUTH_ONCE: "true"
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - tailscale-socket:/var/run/tailscale
+    ports:
+      # Fixed localhost port for farm and frolic (R3.3); never published beyond loopback.
+      - "127.0.0.1:${GRANGE_PORT:-7788}:8080"
+    labels:
+      agent-grange.service: tailscale
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
+
   grange:
     # Named so `make test` can run the unit tests in exactly this image.
     image: agent-grange:local
@@ -13,9 +60,13 @@ services:
         GIT_REPO: ${GIT_REPO:-unknown}
         GIT_DIRTY: ${GIT_DIRTY:-0}
         GIT_PUSHED_BASE: ${GIT_PUSHED_BASE:-}
-    ports:
-      # Fixed localhost port for farm and frolic (R3.3); never published beyond loopback.
-      - "127.0.0.1:${GRANGE_PORT:-7788}:8080"
+    network_mode: service:tailscale
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    volumes:
+      # Read-only does not limit what a socket allows; the non-root user is the control (R8.7).
+      - tailscale-socket:/var/run/tailscale:ro
     labels:
       agent-grange.service: grange
     environment:
@@ -55,9 +106,8 @@ services:
       RECHECK_SECONDS: ${RECHECK_SECONDS:-30}
 
     # healthcheck.py prints why /health failed, so the reason lands in Docker's health log.
-    # Startup failures are forgiven during start_period, which covers the 60-second
-    # tailnet wait plus startup (R6.1, R8.1); after that 3 misses = unhealthy.
-    # No restart policy, here or on any service (R8.9).
+    # The start period covers the 60-second tailnet wait plus startup (R6.1, R8.1);
+    # after that 3 misses = unhealthy.
     healthcheck:
       test: ["CMD", "python3", "/app/healthcheck.py"]
       interval: 2s
@@ -66,3 +116,6 @@ services:
       start_period: 75s
       start_interval: 1s
 
+volumes:
+  tailscale-state:
+  tailscale-socket:

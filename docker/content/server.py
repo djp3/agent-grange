@@ -5,16 +5,17 @@ Started by entrypoint.py after the launch-time freshness check (startup step
 itself. Startup, per requirements 6.1:
 
   2. read configuration; a missing or invalid GRANGE_ID refuses (exit 78)
-  3. tailnet mode only: wait for the sidecar's tailnet address (plan phase 5)
+  3. tailnet mode only: wait up to 60 s for the sidecar's tailnet IPv4
   4. bind the local API to loopback and the container's bridge address, and
      the gossip listener to its one address; never to all interfaces
   5. discovery once, then repairs with up to FANOUT peers, at most 5 s
   6. serve
 
-Plain mode (GRANGE_PEERS set, R6.9) is for testing only: no tailnet, the
-gossip listener on the bridge address, sources limited to that network.
-With neither GRANGE_PEERS nor a tailnet (until plan phase 5.2) the grange is
-alone: local API only.
+Tailnet mode (GRANGE_PEERS empty) is the real one: peers by tag through the
+sidecar's LocalAPI, gossip bound to the tailnet IPv4 only, tailnet sources
+only, and the whois identity check (R5.12, R5.13, R6.8). Plain mode
+(GRANGE_PEERS set, R6.9) is for testing only: no tailnet, the gossip listener
+on the bridge address, sources limited to that network, no identity check.
 """
 from __future__ import annotations
 
@@ -29,8 +30,9 @@ import freshness
 from grange import api_gossip, freshness_watch, runtime
 from grange.api_local import LocalApp, make_handler
 from grange.clock import SystemClock
-from grange.config import EX_CONFIG, Config, ConfigError
-from grange.discovery import NoDiscovery, StaticDiscovery
+from grange.config import EX_CONFIG, TAILNET_WAIT_SECONDS, TS_SOCKET_PATH, Config, ConfigError
+from grange.discovery import (LocalAPI, StaticDiscovery, TailscaleDiscovery, is_tailnet_ip,
+                              wait_for_tailnet)
 from grange.gossip import Core
 from grange.httpbase import Server
 from grange.netaddr import default_route_address, in_networks, local_api_addresses, local_networks
@@ -85,11 +87,17 @@ def main() -> None:
         allow = lambda ip: in_networks(ip, networks)      # noqa: E731
         discovery = StaticDiscovery(cfg.peers)
         resolve = runtime.Resolver()
+        identity = None                          # R5.13 is not run in plain mode (R6.9)
     else:
-        gossip_addr = None                       # tailnet mode arrives in plan phase 5.2
-        own_address = f"lone:{cfg.gossip_port}"
-        allow = lambda ip: False                 # noqa: E731
-        discovery = NoDiscovery()
+        # 3. tailnet mode: the sidecar's address, or refuse after 60 s
+        discovery = TailscaleDiscovery(LocalAPI(TS_SOCKET_PATH), cfg.ts_tag, cfg.gossip_port)
+        gossip_addr = wait_for_tailnet(discovery, TAILNET_WAIT_SECONDS, log)
+        if gossip_addr is None:
+            refuse(f"the Tailscale sidecar reported no tailnet IPv4 address within "
+                   f"{TAILNET_WAIT_SECONDS:.0f}s (socket {TS_SOCKET_PATH})")
+        own_address = f"{gossip_addr}:{cfg.gossip_port}"
+        allow = is_tailnet_ip                    # R5.12: tailnet sources only
+        identity = discovery.is_grange           # R5.13: the device must carry TS_TAG
         resolve = None
 
     pool = ThreadPoolExecutor(max_workers=2 * cfg.fanout, thread_name_prefix="gossip")
@@ -101,12 +109,9 @@ def main() -> None:
 
     local_servers = [bind(a, cfg.api_port, make_handler(LocalApp(store, stats, build, fresh_cfg, fresh_state)),
                           "local API") for a in local_api_addresses()]
-    gossip_server = None
-    if gossip_addr is not None:
-        app = api_gossip.GossipApp(store, core, stats, cfg, allow, log=log)
-        gossip_server = bind(gossip_addr, cfg.gossip_port,
-                             api_gossip.make_handler(app, fresh_cfg, fresh_state), "gossip listener")
-        serve(gossip_server, "gossip")
+    app = api_gossip.GossipApp(store, core, stats, cfg, allow, identity=identity, log=log)
+    serve(bind(gossip_addr, cfg.gossip_port, api_gossip.make_handler(app, fresh_cfg, fresh_state),
+               "gossip listener"), "gossip")       # gossip serves at once: peers' follow-ups arrive here
 
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -121,8 +126,8 @@ def main() -> None:
     ticker = Ticker(store, clock, on_resume=core.on_resume, log=log).start()
     scheduler = runtime.Scheduler(core, clock, log).start()
     where = ", ".join(f"{s.server_address[0]}:{s.server_address[1]}" for s in local_servers)
-    mode = (f"plain mode as {own_address}, gossip on {gossip_addr}:{cfg.gossip_port}, "
-            f"peers {', '.join(cfg.peers)}" if cfg.plain_mode else "alone (no GRANGE_PEERS, no tailnet yet)")
+    mode = (f"plain mode as {own_address}, peers {', '.join(cfg.peers)}" if cfg.plain_mode
+            else f"tailnet mode as {own_address}, peers by tag {cfg.ts_tag}")
     log(f"grange {cfg.grange_id!r} incarnation {store.incarnation} serving the local API on {where}; {mode}")
 
     stop.wait()

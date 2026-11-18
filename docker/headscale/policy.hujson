@@ -1,0 +1,15 @@
+// The grange policy (R9.1, R9.2): the tag is defined and owned by the admin,
+// and one rule lets granges reach granges on the gossip port. Nothing else is
+// granted to or from the tag. Keep the port equal to GRANGE_GOSSIP_PORT.
+{
+  "tagOwners": {
+    "tag:grange": [],
+  },
+  "grants": [
+    {
+      "src": ["tag:grange"],
+      "dst": ["tag:grange"],
+      "ip": ["tcp:7789"],
+    },
+  ],
+}

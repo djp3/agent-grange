@@ -112,7 +112,7 @@ def startup(core, log) -> None:
     sent = core.start()
     if sent:
         wait_until(lambda: core.startup_pending <= 0, STARTUP_REPAIR_SECONDS)
-        log(f"startup: repaired with {sent - max(0, core.startup_pending)} of {sent} peer(s); "
+        log(f"startup: {core.startup_ok} of {sent} repair(s) answered; "
             f"{len(core.store.peer_ids())} grange(s) known")
 
 

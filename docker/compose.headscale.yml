@@ -1,0 +1,206 @@
+# Local headscale stack, for testing only (R3.5, R10.3, plan phases 5 and 6).
+# Nothing here touches the team's control server.
+#
+#   certs           a throwaway CA and the headscale server certificate
+#   headscale       pinned headscale with the embedded relay and the grange policy
+#   headscale-init  a reusable tagged pre-auth key (R9.3), and an untagged one
+#                   for the device that is not a grange (6.4 example 8)
+#   ts-a/b/c        Tailscale sidecars, each with a grange in its namespace,
+#   grange-a/b/c    exactly as docker-compose.yml pairs them (R8.1)
+#   ts-x            a sidecar joined without the tag
+#
+# HEADSCALE_POLICY=policy-open.hujson swaps in a test-only policy that opens
+# the ACL, so the whois check alone has to reject the untagged device (R10.3).
+# Driven by `make test-headscale`. No restart policy on any service (R8.9).
+name: agent-grange-headscale
+
+x-sidecar: &sidecar
+  image: tailscale/tailscale:v1.104.7
+  cap_add: [NET_ADMIN]
+  devices: ["/dev/net/tun:/dev/net/tun"]
+  networks: [tailnet-lab]
+  depends_on:
+    headscale-init:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    start_period: 60s
+    start_interval: 1s
+
+x-sidecar-env: &sidecar-env
+  TS_AUTHKEY: file:/keys/authkey
+  # No --advertise-tags: the tag comes from the pre-auth key. With tag:grange owned by
+  # the admin alone (R9.1), headscale refuses a node that also requests it.
+  TS_EXTRA_ARGS: --login-server=https://headscale
+  TS_STATE_DIR: /var/lib/tailscale
+  TS_SOCKET: /var/run/tailscale/tailscaled.sock
+  TS_USERSPACE: "false"
+  TS_ACCEPT_DNS: "false"
+  TS_AUTH_ONCE: "true"
+  TS_ENABLE_HEALTH_CHECK: "true"
+  TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+  SSL_CERT_FILE: /certs/ca.crt               # the throwaway CA; a real server needs nothing here
+
+x-grange: &grange
+  image: agent-grange:local
+  healthcheck:
+    test: ["CMD", "python3", "/app/healthcheck.py"]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    start_period: 75s
+    start_interval: 1s
+
+x-grange-env: &grange-env
+  SKIP_FRESHNESS_CHECK: "1"
+  FANOUT: ${HEADSCALE_FANOUT:-}
+
+services:
+  certs:
+    image: agent-grange:local
+    user: "0:0"
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        cd /certs
+        if [ ! -s headscale.crt ]; then
+          openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=agent-grange local test CA" \
+            -keyout ca.key -out ca.crt 2>/dev/null
+          openssl req -newkey rsa:2048 -nodes -subj "/CN=headscale" -keyout headscale.key \
+            -out headscale.csr 2>/dev/null
+          printf 'subjectAltName=DNS:headscale,IP:172.29.207.10\n' > san.ext
+          openssl x509 -req -in headscale.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 \
+            -extfile san.ext -out headscale.crt 2>/dev/null
+          chmod 644 headscale.key ca.crt headscale.crt
+        fi
+        echo certs ready
+    volumes: ["certs:/certs"]
+
+  headscale:
+    image: headscale/headscale:0.29.7
+    command: ["serve"]
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    networks:
+      tailnet-lab:
+        ipv4_address: 172.29.207.10
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - ./headscale/${HEADSCALE_POLICY:-policy.hujson}:/etc/headscale/policy.hujson:ro
+      - certs:/certs:ro
+      - hs-data:/var/lib/headscale
+      - hs-run:/var/run/headscale
+    healthcheck:
+      test: ["CMD", "headscale", "nodes", "list"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  headscale-init:
+    image: headscale/headscale:0.29.7-debug
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        if [ ! -s /keys/authkey ]; then
+          headscale preauthkeys create --reusable --tags tag:grange --expiration 24h -o json > /keys/tagged.json
+          sed -n 's/.*"key": *"\([^"]*\)".*/\1/p' /keys/tagged.json | head -1 > /keys/authkey
+        fi
+        if [ ! -s /keys/untagged ]; then
+          headscale users create tester >/dev/null 2>&1 || true
+          uid=$$(headscale users list -o json | sed -n 's/.*"id": *\([0-9]*\).*/\1/p' | head -1)
+          headscale preauthkeys create --user "$$uid" --reusable --expiration 24h -o json > /keys/untagged.json
+          sed -n 's/.*"key": *"\([^"]*\)".*/\1/p' /keys/untagged.json | head -1 > /keys/untagged
+        fi
+        test -s /keys/authkey && test -s /keys/untagged
+        echo "pre-auth keys ready"
+    depends_on:
+      headscale:
+        condition: service_healthy
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - hs-run:/var/run/headscale
+      - keys:/keys
+
+  ts-a:
+    <<: *sidecar
+    hostname: grange-a
+    environment: {<<: *sidecar-env, TS_HOSTNAME: grange-a}
+    ports: ["127.0.0.1:17981:8080"]
+    labels: {agent-grange.service: tailscale}
+    volumes: [ts-a-state:/var/lib/tailscale, ts-a-sock:/var/run/tailscale, keys:/keys:ro, certs:/certs:ro]
+
+  ts-b:
+    <<: *sidecar
+    hostname: grange-b
+    environment: {<<: *sidecar-env, TS_HOSTNAME: grange-b}
+    ports: ["127.0.0.1:17982:8080"]
+    labels: {agent-grange.service: tailscale}
+    volumes: [ts-b-state:/var/lib/tailscale, ts-b-sock:/var/run/tailscale, keys:/keys:ro, certs:/certs:ro]
+
+  ts-c:
+    <<: *sidecar
+    hostname: grange-c
+    environment: {<<: *sidecar-env, TS_HOSTNAME: grange-c}
+    ports: ["127.0.0.1:17983:8080"]
+    labels: {agent-grange.service: tailscale}
+    volumes: [ts-c-state:/var/lib/tailscale, ts-c-sock:/var/run/tailscale, keys:/keys:ro, certs:/certs:ro]
+
+  ts-x:
+    <<: *sidecar
+    hostname: laptop-two
+    environment:
+      <<: *sidecar-env
+      TS_HOSTNAME: laptop-two
+      TS_AUTHKEY: file:/keys/untagged
+      TS_EXTRA_ARGS: --login-server=https://headscale
+    volumes: [ts-x-state:/var/lib/tailscale, ts-x-sock:/var/run/tailscale, keys:/keys:ro, certs:/certs:ro]
+
+  grange-a:
+    <<: *grange
+    network_mode: service:ts-a
+    depends_on: {ts-a: {condition: service_healthy}}
+    labels: {agent-grange.service: grange}
+    environment: {<<: *grange-env, GRANGE_ID: a}
+    volumes: [ts-a-sock:/var/run/tailscale:ro]
+
+  grange-b:
+    <<: *grange
+    network_mode: service:ts-b
+    depends_on: {ts-b: {condition: service_healthy}}
+    labels: {agent-grange.service: grange}
+    environment: {<<: *grange-env, GRANGE_ID: b}
+    volumes: [ts-b-sock:/var/run/tailscale:ro]
+
+  grange-c:
+    <<: *grange
+    network_mode: service:ts-c
+    depends_on: {ts-c: {condition: service_healthy}}
+    labels: {agent-grange.service: grange}
+    environment: {<<: *grange-env, GRANGE_ID: c}
+    volumes: [ts-c-sock:/var/run/tailscale:ro]
+
+networks:
+  tailnet-lab:
+    ipam:
+      config:
+        - subnet: 172.29.207.0/24
+
+volumes:
+  certs:
+  hs-data:
+  hs-run:
+  keys:
+  ts-a-state:
+  ts-a-sock:
+  ts-b-state:
+  ts-b-sock:
+  ts-c-state:
+  ts-c-sock:
+  ts-x-state:
+  ts-x-sock:
