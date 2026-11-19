@@ -320,16 +320,15 @@ class WorkedExampleTest(unittest.TestCase):
         self.assertGreater(I2, I1)
         self.assertEqual((d.counter, d.rev), (1, 1))
         m.startup_repairs("don", ["alice", "bob"])               # 6.1 step 5
-        # The text has Alice first receive "I2, counter 2, rev 2". Under 6.1
-        # step 5 the startup repairs' follow-up push arrives first, carrying
-        # counter 1, rev 1; that is where the new life is accepted and its
-        # liveness taken whole. Farm's push then brings rev 2. Reported as a
-        # wording point; the claim that matters (I2 beats the remembered I1,
-        # counter 66) holds either way.
+        # The startup repair's follow-up push hands Alice "I2, counter 1,
+        # rev 1" with an empty agent list: counter 1 is far below the 66 she
+        # remembers, but I2 beats I1, so the new life is accepted.
         self.assertEqual(held(m.store("alice"), "djp3"), (I2, 1, 1))
+        self.assertEqual(m.store("alice").body("djp3").agents, ())
         m.at(at("09:10:21"), lambda: m.farm_push("don", two_sessions("waiting")))
         m.run_to(at("09:10:21"))
-        self.assertEqual(held(m.store("alice"), "djp3"), (I2, 2, 2))
+        self.assertEqual(held(m.store("alice"), "djp3"), (I2, 2, 2))   # farm's first push
+        self.assertEqual(len(m.store("alice").body("djp3").agents), 2)  # his agents are back
         self.assertGreater(m.store("alice").cursor, before["alice"])
         self.assertEqual(m.store("alice").apply_body(old_body, source="bob"), IGNORED)  # lagging I1 copy
 
@@ -358,6 +357,11 @@ class WorkedExampleTest(unittest.TestCase):
             self.assertIsNone(m.store(peer).body("djp3"))         # dropped by 12:31
             self.assertEqual(m.store(peer).remembered("djp3"), (I2, 1300))
             self.assertGreater(m.cursors()[peer], before[peer])
+        m.run_to(at("12:41:00"))
+        self.assertEqual(m.store("alice").remembered("djp3"), (I2, 1300))
+        m.run_to(at("12:41:10"))
+        for peer in ("alice", "bob"):
+            self.assertIsNone(m.store(peer).remembered("djp3"))   # forgotten "until about 12:41"
         m.run_to(at("13:14:59"))
 
         # 13:15:00, the lid opens. The stopwatch ran on, as under docker pause.
@@ -410,40 +414,64 @@ class WorkedExampleTest(unittest.TestCase):
                 return t - at(wake_at)
         self.fail(f"Don not back on every board within {limit} s of waking")
 
-    def test_step_8_stopwatch_stood_still_short_sleep(self):
-        """The mechanism the text describes, for a sleep shorter than
-        FORGET_SECONDS: the peers still remember (I2, 1300)."""
-        m, I2, (don_cursor, board_before) = self.sleep_with_stopwatch_still("12:36:00")
+    def test_step_8_stopwatch_stood_still_45_minutes(self):
+        """The text's 45-minute sleep with the stopwatch frozen. By 13:15 the
+        peers forgot (I2, 1300) long ago, so the next repair, at most
+        REPAIR_SECONDS away, readmits Don at counter 1300 with no heartbeat."""
+        m, I2, (don_cursor, board_before) = self.sleep_with_stopwatch_still("13:15:00")
         don, d = m.nodes["don"], m.store("don")
-        m.run_to(at("12:36:00"))
+        for peer in ("alice", "bob"):
+            self.assertIsNone(m.store(peer).remembered("djp3"))  # no peer remembers his version
+        back = self.back_on_every_board_within(m, "13:15:00", 20)
+        self.assertLessEqual(back, d.cfg.repair_s)                # "at most 3 seconds away"
+        self.assertEqual(don.resumes, 0)                          # no gap is seen
+        self.assertEqual(m.store("alice").body("djp3").counter, 1300)   # accepted whatever its counter
+        self.assertFalse(d.farm_stale)
+        self.assertEqual(d.cursor, don_cursor)
+        self.assertEqual([g["grange"] for g in d.picture()["granges"]], board_before)
+
+    # ---------------------------------------------- step 8, sleep under ten minutes
+    def test_step_8_short_sleep_stopwatch_ran_on(self):
+        """Waking at 12:35, when the peers still remember (I2, 1300): the
+        R6.22 bump lifts the counter above it, so the immediate repair
+        readmits Don."""
+        m, I2 = self.build_to_lid_close()
+        don, d = m.nodes["don"], m.store("don")
+        don.up, don.farm = False, None
+        m.run_to(at("12:34:59"))
+        for peer in ("alice", "bob"):
+            self.assertIsNone(m.store(peer).body("djp3"))
+            self.assertEqual(m.store(peer).remembered("djp3"), (I2, 1300))
+
+        def wake():
+            don.up = True
+            m.tick("don")                                         # sees the gap
+            self.assertEqual(don.resumes, 1)
+            first = next(s for s in m.sent if s[0] == m.t and s[3] == "djp3")
+            self.assertEqual(first[6], 1301)                      # the follow-up push, after the bump
+            for peer in ("alice", "bob"):
+                self.assertEqual(held(m.store(peer), "djp3")[0], I2)          # readmitted at once
+                self.assertGreater(held(m.store(peer), "djp3")[1], 1300)
+            self.assertTrue(d.farm_stale)                         # farm looks five minutes silent
+        m.at(at("12:35:00"), wake)
+        m.run_to(at("12:35:00"))
+
+    def test_step_8_short_sleep_stopwatch_stood_still(self):
+        """Waking at 12:35 with the stopwatch frozen: counter 1300 does not
+        beat the remembered 1300 and is refused; the next heartbeat makes it
+        1301 and the next repair delivers that, within about 13 seconds."""
+        m, I2, (don_cursor, board_before) = self.sleep_with_stopwatch_still("12:35:00")
+        don, d = m.nodes["don"], m.store("don")
+        m.run_to(at("12:35:00"))
         self.assertEqual(don.resumes, 0)                          # no gap is seen
         self.assertEqual(m.store("alice").remembered("djp3"), (I2, 1300))
         self.assertIsNone(m.store("alice").body("djp3"))          # counter 1300 offered and refused
         self.assertEqual(d.counter, 1300)
-        back = self.back_on_every_board_within(m, "12:36:00", 20)
+        back = self.back_on_every_board_within(m, "12:35:00", 20)
         self.assertLessEqual(back, 13)                            # "within about 13 seconds"
         self.assertEqual(m.store("alice").body("djp3").counter, 1301)
         self.assertFalse(d.farm_stale)                            # farm does not look silent
         self.assertEqual(d.cursor, don_cursor)                    # nothing really changed
-        self.assertEqual([g["grange"] for g in d.picture()["granges"]], board_before)
-
-    def test_step_8_stopwatch_stood_still_45_minutes(self):
-        """The text's 45-minute sleep. R6.6 remembers a removed peer's version
-        for FORGET_SECONDS (600 s) only, so by 13:15 the peers have forgotten
-        (I2, 1300) since about 12:41, and the first repair readmits Don at
-        counter 1300. The text says that body is refused against the remembered
-        1300 and Don waits for the next heartbeat; that wording contradicts
-        R6.6 and is reported for correction in the requirements. The outcome
-        the text promises, Don back within about 13 seconds, holds."""
-        m, I2, (don_cursor, board_before) = self.sleep_with_stopwatch_still("13:15:00")
-        don, d = m.nodes["don"], m.store("don")
-        self.assertIsNone(m.store("alice").remembered("djp3"))   # forgotten after FORGET_SECONDS
-        back = self.back_on_every_board_within(m, "13:15:00", 20)
-        self.assertLessEqual(back, 13)
-        self.assertEqual(don.resumes, 0)
-        self.assertEqual(m.store("alice").body("djp3").counter, 1300)   # readmitted without a new heartbeat
-        self.assertFalse(d.farm_stale)
-        self.assertEqual(d.cursor, don_cursor)
         self.assertEqual([g["grange"] for g in d.picture()["granges"]], board_before)
 
 
