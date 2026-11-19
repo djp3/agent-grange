@@ -3,8 +3,10 @@
 Companion to `requirements.md`; requirement numbers below refer to it.
 Rewritten 2026-11-18 against the requirements as they stood during Don's
 manual review, and revised the same day after a third review pass. Approved
-by Don on 2026-11-18. Where this plan and the requirements disagree, the
-requirements win and the plan is corrected.
+by Don on 2026-11-18, and corrected the same day after phases 0 to 7 were
+built: the sidecar does not request the tag (ground rules, 5.2). Where this
+plan and the requirements disagree, the requirements win and the plan is
+corrected.
 
 Nine phases, 0 to 8, each ending in something that runs and is checked.
 Phases 0 to 4 need no tailnet and no control server, so they are built and
@@ -36,10 +38,11 @@ S is a sitting, M a day, L two to three days, as rough relative sizes.
 - Configuration is environment only (section 7). Defaults for the grange keys
   live in one place, `config.py`. Compose passes each key through from `.env`
   and an empty value means "use the default" (section 7), so the compose file
-  does not repeat a default. There are two exceptions, where compose itself
-  consumes the value: `GRANGE_PORT` for the port publish, and `TS_TAG` for the
-  tag the sidecar advertises. The freshness keys keep the compose defaults
-  they have today (R8.5).
+  does not repeat a default. There is one exception, where compose itself
+  consumes the value: `GRANGE_PORT` for the port publish. `TS_TAG` goes to
+  the grange only, as its discovery filter; the sidecar does not request the
+  tag, because the pre-auth key carries it (R8.1, R9.3). The freshness keys
+  keep the compose defaults they have today (R8.5).
 - Every module takes a clock object with a monotonic reading for ages and a
   wall reading for incarnations, so tests and the simulation run in simulated
   time.
@@ -456,7 +459,8 @@ it before he stands up the team server (R9.0).
 
 - `docker-compose.yml` becomes two services per R8.1: `tailscale` with the
   pinned image, capabilities, state and socket volumes, hostname
-  `grange-${GRANGE_ID}`, login server and tag from `.env`, a healthcheck, the
+  `grange-${GRANGE_ID}`, login server and pre-auth key from `.env` (the key
+  carries the tag; the sidecar does not request it), a healthcheck, the
   label `agent-grange.service=tailscale`, and the `127.0.0.1:${GRANGE_PORT}`
   publish; `grange` with `network_mode: service:tailscale`, `depends_on`
   healthy, the socket mounted, its label, running as the user the spike

@@ -259,10 +259,12 @@ for narration: nothing below compares clocks across machines.
    one. Peers remove Don at once and remember "I1, counter 66" for ten
    minutes. The new container starts at 09:10:20 with a fresh incarnation I2,
    which is larger because the clock moved on, and `counter` and `rev` back
-   at 1; farm's first push makes `rev` 2. Alice receives "I2, counter 2, rev
-   2". Although counter 2 is far below the 66 she remembers, I2 is greater
+   at 1. Alice no longer lists `djp3` in her digest, so the follow-up push of
+   his startup repair hands her "I2, counter 1, rev 1" with an empty agent
+   list. Although counter 1 is far below the 66 she remembers, I2 is greater
    than I1, so this is a new life of the same grange: the body is accepted,
-   and its liveness is taken whole.
+   and its liveness is taken whole. Farm's first push then makes `rev` 2 and
+   `counter` 2, and that body puts his agents back on her board.
    If Bob, lagging, later re-sends the old I1 body, it is refused because I1
    is below the I2 record everyone now holds. If a digest entry "I2, counter
    3" reaches someone who still holds an I1 body, it refreshes nothing: that
@@ -271,17 +273,19 @@ for narration: nothing below compares clocks across machines.
 8. **Laptop sleeps.** At 12:30 Don closes the lid with the counter at 1300.
    The process is frozen, so no heartbeat moves and no repair answers. By
    12:31 every peer's seen age for Don passes 60 seconds; they drop him from
-   their boards, the cursor moves, and each remembers "I2, counter 1300". At
-   13:15 the lid opens. What happens next depends on whether the stopwatch
-   the grange measures time with, the monotonic clock, kept running while
-   the machine slept. The phase 5 spike measures which it is on each kind of
-   laptop.
+   their boards, the cursor moves, and each remembers "I2, counter 1300" for
+   ten minutes, until about 12:41. At 13:15 the lid opens. By then no peer
+   holds his record or remembers his version, so the first copy of his body
+   to reach a peer is accepted as new, whatever its counter. How soon that
+   happens depends on whether the stopwatch the grange measures time with,
+   the monotonic clock, kept running while the machine slept. The phase 5
+   spike measures which it is on each kind of laptop.
 
    *The stopwatch ran on*, as it does under `docker pause`. The ticker sees
    a 45-minute gap between two of its runs, bumps the counter, and runs a
    repair immediately (R6.22). That repair's follow-up push carries Don's
-   body with a counter above the remembered 1300, so the peer readmits him
-   and forwards the body; Don is back on every board within a few seconds.
+   body; the peer accepts it and forwards it, and Don is back on every board
+   within a few seconds.
    On his own board every teammate's seen age is now 45 minutes, so the wake
    first expires everyone and the repair response then refills the picture.
    Farm looks 45 minutes silent as well, so `farm_stale` flips to true until
@@ -289,15 +293,22 @@ for narration: nothing below compares clocks across machines.
    changes that every board sees.
 
    *The stopwatch stood still*, which is likely on a real laptop. No gap is
-   seen and nothing special happens. A repair in the first seconds offers
-   Don's body with counter 1300, which does not beat the remembered 1300 and
-   is refused. The next heartbeat, at most 10 seconds away, makes it 1301,
-   and the next repair delivers that, so Don is back on every board within
-   about 13 seconds of his network returning. His own board keeps the
-   picture from before the sleep: the first repair corrects the teammates
-   who are still running, and teammates who left while he slept drop off
-   within 60 seconds. Farm does not look silent, so `farm_stale` does not
-   flip.
+   seen and nothing special happens. The next repair, at most 3 seconds
+   away, offers Don's body with counter 1300; the peer accepts it and
+   forwards it, and Don is back on every board within a few seconds of his
+   network returning. His own board keeps the picture from before the
+   sleep: the first repair corrects the teammates who are still running, and
+   teammates who left while he slept drop off within 60 seconds. Farm does
+   not look silent, so `farm_stale` does not flip.
+
+   *A sleep shorter than ten minutes* differs in one way: peers still
+   remember "I2, counter 1300" when Don wakes, say at 12:35. If the
+   stopwatch ran on, the bump of R6.22 lifts his counter above the
+   remembered 1300, so the immediate repair readmits him. If it stood still,
+   the first repair offers counter 1300, which does not beat the remembered
+   1300 and is refused. The next heartbeat, at most 10 seconds away, makes
+   it 1301, and the next repair delivers that, so Don is back on every board
+   within about 13 seconds of his network returning.
 
 9. **Clock was wrong.** Suppose Don's clock was an hour ahead when a grange
    started, giving it an incarnation I3 that is too large, and NTP then fixes
@@ -818,12 +829,16 @@ grange port. What farm reports is farm's concern (R5.4).
   `tailscale` runs the official Tailscale client image, pinned, with `NET_ADMIN`
   and `/dev/net/tun`, a named volume for its state so the device identity
   survives restarts, a hostname of `grange-<GRANGE_ID>`, the login server and
-  tag from `.env`, a healthcheck, the label `agent-grange.service=tailscale`,
-  and publishes `127.0.0.1:${GRANGE_PORT}` to the grange API port. `grange`
-  uses `network_mode: service:tailscale`, starts after the sidecar is healthy,
-  carries the label `agent-grange.service=grange`, mounts the sidecar's daemon
-  socket, and has a healthcheck start period of at least 75 seconds to cover
-  the tailnet wait.
+  pre-auth key from `.env`, a healthcheck, the label
+  `agent-grange.service=tailscale`, and publishes `127.0.0.1:${GRANGE_PORT}`
+  to the grange API port. The sidecar does not request the tag: the pre-auth
+  key carries it (R9.3), and headscale refuses a device that asks for a tag
+  only the admin owns (R9.1). `TS_TAG` is read by `grange` alone, to pick out
+  its peers (R6.8). `grange` uses `network_mode: service:tailscale`, starts
+  after the sidecar is healthy, carries the label
+  `agent-grange.service=grange`, mounts the sidecar's daemon socket, and has
+  a healthcheck start period of at least 75 seconds to cover the tailnet
+  wait.
 - **R8.2** The grange image stays `python:3.12-slim` with the standard library
   only. Any dependency needs a stated reason.
 - **R8.3** Makefile targets: `make up`, `make down`, `make update`, `make logs`
@@ -1107,3 +1122,12 @@ grange port. What farm reports is farm's concern (R5.4).
   unconfirmed.
 - **2026-11-18, approval.** Don approved this document and the plan as they
   stood at commit bb67d00. Only the status lines changed after that.
+- **2026-11-18, corrections after phases 0 to 7.** Three corrections found
+  while building, each agreed by Don. 4.3 step 7: the first copy of the new
+  incarnation a peer receives is "counter 1, rev 1", from the startup
+  repair, before farm's first push. 4.3 step 8: a 45-minute sleep outlasts
+  `FORGET_SECONDS`, so the returning body is accepted whatever its counter;
+  the refusal and the 13-second wait belong to a sleep under ten minutes,
+  now described on its own. R8.1: the sidecar does not request the tag,
+  which comes from the pre-auth key; `TS_TAG` is the grange's discovery
+  filter only. No rule of the protocol changed.
