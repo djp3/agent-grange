@@ -44,14 +44,13 @@ jobs:
           fetch-depth: 0
       - run: make -C docker test-plain
 
-  # Optional (plan phase 7): runs if the hosted runner allows /dev/net/tun,
-  # which would keep Docker Engine on Linux covered on every push. Not yet
-  # seen green, so it does not fail the workflow.
+  # Needs /dev/net/tun on the hosted runner, which ubuntu-24.04 provides; it
+  # keeps the sidecar on Docker Engine on Linux covered on every push. Made
+  # required after two green runs (plan phase 7).
   test-headscale:
-    name: make test-headscale (optional)
+    name: make test-headscale
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
