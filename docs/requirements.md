@@ -554,8 +554,11 @@ as the sender holds it at that moment.
   slept: grange increases its `counter` and runs one repair exchange at once
   instead of waiting for the next tick. That repair's follow-up push carries
   its own body with the new counter, which readmits it at the peer (R6.6) and
-  spreads by forward-once (R6.12). Without this, readmission after a pause
-  would wait for the next heartbeat and the next repair tick.
+  spreads by forward-once (R6.12). Without this, a grange that resumes while
+  peers still remember its version, which they do until `FORGET_SECONDS`
+  after expiring it (R6.6), would wait for the next heartbeat and the next
+  repair tick to be readmitted. Once they have forgotten it, the next repair
+  readmits it whatever its counter.
 
 ### 6.3 Liveness of peers
 
@@ -868,10 +871,10 @@ grange port. What farm reports is farm's concern (R5.4).
   needs Docker anyway. `make test-sim` runs the hour-long simulations (R10.5)
   the same way. `make test-host` runs the unit tests on the host interpreter
   as an optional fast loop with no claim about version parity. CI runs
-  `make test`, `make test-sim`, and `make test-plain`. The harness drivers in
-  `tools/` run on the host, because they drive Docker, so `make test-plain`
-  and `make test-headscale` need a host Python 3.9 or later; the drivers use
-  the standard library only.
+  `make test`, `make test-sim`, `make test-plain`, and `make test-headscale`.
+  The harness drivers in `tools/` run on the host, because they drive Docker,
+  so `make test-plain` and `make test-headscale` need a host Python 3.9 or
+  later; the drivers use the standard library only.
 - **R8.9** No automatic restart. Compose sets no restart policy on either
   service. After a reboot or a restart of Docker the grange stays down until
   the developer runs `make up`.
@@ -1023,7 +1026,7 @@ grange port. What farm reports is farm's concern (R5.4).
 | 19 | version split (review D1) | `rev` for content, `counter` for liveness, both in the digest | one counter for both |
 | 20 | contract handoff (D2) | phase 8, as planned | earlier handoff |
 | 21 | team control server (D3; owner settled 2026-11-18) | outside this repo; needed only by phase 8; Don stands it up, date open | deployment in repo |
-| 22 | how work lands (D4; landing rule spelled out 2026-11-18) | plain commits on `main` once tests pass; no pull requests, no merge commits; from a worktree branch, `main` is fast-forwarded at the end of each phase on Don's word and pushed only on his word | pull requests |
+| 22 | how work lands (D4; landing rule spelled out 2026-11-18, moved to `develop` the same day) | plain commits on `develop` once tests pass; no pull requests, no merge commits; `main` is fast-forwarded to `develop` on Don's word; either branch is pushed only on his word | pull requests; landing directly on `main`, the rule until `develop` was made |
 | 23 | moving the tag (D5) | by hand | GitHub Actions on merge |
 | 24 | runtimes (D6) | Docker Desktop for Mac and Docker Engine on Linux | Mac only |
 | 25 | names (D7) | `agent-grange` for tag, project, label; renamed in phase 0 | keep `agentic-grange` |
@@ -1131,3 +1134,11 @@ grange port. What farm reports is farm's concern (R5.4).
   now described on its own. R8.1: the sidecar does not request the tag,
   which comes from the pre-auth key; `TS_TAG` is the grange's discovery
   filter only. No rule of the protocol changed.
+- **2026-11-18, landing on `develop`.** Don made `develop` the working
+  branch after phases 0 to 7. Work lands there as plain commits, `main` is
+  fast-forwarded to it on his word, and either branch is pushed only on his
+  word (decision 22, and the plan's ground rules). With his agreement,
+  R6.22's closing sentence now says when the wait for the next heartbeat
+  applies: only while peers still remember the grange's version. CI runs
+  `make test-headscale` as a fourth required job (R8.8): Don approved that
+  once it had passed on the hosted runner twice.

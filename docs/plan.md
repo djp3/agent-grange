@@ -4,9 +4,9 @@ Companion to `requirements.md`; requirement numbers below refer to it.
 Rewritten 2026-11-18 against the requirements as they stood during Don's
 manual review, and revised the same day after a third review pass. Approved
 by Don on 2026-11-18, and corrected the same day after phases 0 to 7 were
-built: the sidecar does not request the tag (ground rules, 5.2). Where this
-plan and the requirements disagree, the requirements win and the plan is
-corrected.
+built: the sidecar does not request the tag (ground rules, 5.2), and work
+lands on `develop` (ground rules). Where this plan and the requirements
+disagree, the requirements win and the plan is corrected.
 
 Nine phases, 0 to 8, each ending in something that runs and is checked.
 Phases 0 to 4 need no tailnet and no control server, so they are built and
@@ -49,15 +49,16 @@ S is a sitting, M a day, L two to three days, as rough relative sizes.
 - The freshness check, the Makefile's git metadata, and the `make update` flow
   are kept as they are, with one exception: the tag is renamed in phase 0
   (R3.9, R8.5).
-- Work lands on `main` as plain commits once its tests pass. No pull requests
-  and no merge commits (decision 22). When the work is done in a separate
-  worktree, as the implementer session's is, it is committed on that
-  worktree's branch, which starts from the approved commit on `main`. At the
-  end of each phase, on Don's word, `main` is fast-forwarded to that branch
-  from the main checkout with `git merge --ff-only`; a worktree cannot move a
-  branch that is checked out elsewhere. If `main` has moved in the meantime,
-  the branch is rebased onto it first. `main` is pushed to origin only when
-  Don says so. The tag moves only in phase 8, by hand (decision 23).
+- Work lands on `develop` as plain commits once its tests pass. No pull
+  requests and no merge commits (decision 22). A session working in a
+  separate worktree commits on its own branch, or on `develop` itself when
+  that is the branch checked out there, as it is in the implementer
+  session's worktree. A commit made on another branch reaches `develop` by
+  fast-forward only. `main` is fast-forwarded to `develop` on Don's word,
+  from the main checkout, with `git merge --ff-only`; a worktree cannot move
+  a branch that is checked out elsewhere. Either branch is pushed to origin
+  only when Don says so. The tag moves only in phase 8, by hand (decision
+  23).
 - No organization name anywhere in the repo, the documents, or the code
   (R3.9).
 - Nothing before phase 8 depends on the team's control server (R9.0).
@@ -512,11 +513,14 @@ sidecar without the tag (R10.3). `make test-headscale` runs:
   `make up` (R8.9), and the note from R6.21 about using a private
   `GRANGE_GROUP` while working ahead of the tag.
 - `.env.example` checked key by key against section 7 and `config.py`.
-- GitHub Actions: `make test`, `make test-sim`, and `make test-plain` on every
-  push (R8.8). All three need only Docker, so CI and a laptop run the same
-  thing, and none of them contacts the real freshness endpoint. If the hosted
-  runner allows the tun device, `make test-headscale` is added as well, which
-  would keep the Linux runtime covered on every push; it is not required.
+- GitHub Actions: `make test`, `make test-sim`, `make test-plain`, and
+  `make test-headscale` on every push (R8.8). CI and a laptop run the same
+  thing, and none of the four contacts the real freshness endpoint. The first
+  three need only Docker. `make test-headscale` also needs the tun device,
+  which the hosted runner provides, and it keeps the sidecar on Docker
+  Engine on Linux covered on every push. It began as a job that could not
+  fail the workflow; Don approved making it required once it had passed
+  there twice.
 - The tag is moved by hand (decision 23). No workflow touches it.
 
 ## Phase 8: rollout
@@ -546,7 +550,7 @@ from `docs/headscale.md`. No date yet (R9.0).
 
 | who | needs to do | by phase |
 |---|---|---|
-| Don | approve the two tag pushes in phase 0, in the session doing the work; say when `main` is fast-forwarded and when it is pushed | 0 onward |
+| Don | approve the two tag pushes in phase 0, in the session doing the work; say when `main` is fast-forwarded to `develop` and when either branch is pushed | 0 onward |
 | Don | provide a Linux host with Docker Engine for the spike and the smoke test | 5 |
 | Don | stand up the team headscale server from the runbook; no date yet | 8 |
 | headscale admin | define the tag and ACL, issue a key | 8 |
@@ -581,7 +585,7 @@ from `docs/headscale.md`. No date yet (R9.0).
 | R8.4: joining | 1, 5.2 | phase 5 check |
 | R8.5: freshness unchanged | 0 | AHEAD start in phase 0, stale scenario |
 | R8.6, R8.7: runtimes, non-root | 5.1 | spike on both runtimes |
-| R8.8: test runner | 0, 3, 7 | CI runs the three targets |
+| R8.8: test runner | 0, 3, 7 | CI runs the four targets |
 | R8.9: no automatic restart | 0, 5.2 | the compose file has no restart policy; README note in phase 7 |
 | R9.7 to R9.13: security, privacy | 1, 2, 3, 5.2 | validation tests, negative cases |
 | R10.1 to R10.5 | 1 to 8 | they are the checks above |
