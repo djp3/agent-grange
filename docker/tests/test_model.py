@@ -70,6 +70,21 @@ class FarmPushTest(unittest.TestCase):
     def test_exactly_at_limits_is_fine(self):
         parse_farm_push({"agents": [{"owner": "o" * 256, "name": "n", "state": "s"}] * 200})
 
+    def test_lone_surrogate_is_400(self):
+        """JSON can spell a lone surrogate, which is not text and has no UTF-8
+        form. It is refused like any other malformed value (R9.10)."""
+        for field in ("owner", "name", "state"):
+            raw = ('{"agents":[{"owner":"o","name":"n","state":"s"}]}'
+                   .replace(f'"{field}":"{field[0]}"', f'"{field}":"x\\ud800"')).encode()
+            with self.assertRaises(ValidationError) as cm:
+                parse_farm_push(decode_json(raw))
+            self.assertEqual(cm.exception.status, 400, field)
+            self.assertIn("not valid Unicode", cm.exception.message)
+
+    def test_surrogate_pair_is_one_character(self):
+        agents = parse_farm_push(decode_json(b'{"agents":[{"owner":"o","name":"\\ud83d\\ude00","state":"s"}]}'))
+        self.assertEqual(agents[0].name, "\U0001F600")
+
     def test_same_agents_ignores_order_not_multiplicity(self):
         a, b = Agent("o", "a", "busy"), Agent("o", "b", "idle")
         self.assertTrue(same_agents((a, b), (b, a)))
@@ -116,6 +131,14 @@ class DigestAndMessageTest(unittest.TestCase):
         for value in ({"a": [1, 2, 3]}, {"a": "x"}, [], {"a": [1, 0, 1, None]}, {"": [1, 1, 1, None]}):
             with self.assertRaises(ValidationError) as cm:
                 parse_digest(value)
+            self.assertEqual(cm.exception.status, 400, value)
+
+    def test_lone_surrogate_in_a_record_or_digest_is_400(self):
+        for value, parse in ((record_json(grange="a\udc80"), parse_record),
+                             (record_json(group="g\udc80"), parse_record),
+                             ({"a\udc80": [1, 1, 1, None]}, parse_digest)):
+            with self.assertRaises(ValidationError) as cm:
+                parse(value)
             self.assertEqual(cm.exception.status, 400, value)
 
     def test_digest_cap_is_413(self):
