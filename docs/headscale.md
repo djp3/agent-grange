@@ -151,26 +151,31 @@ throwaway CA, the policy above, and Tailscale sidecars on one Docker network.
 
 | check (plan 5.1) | Docker Desktop for Mac (Docker 29.9) | Docker Engine on Linux |
 |---|---|---|
-| registration with the tag; peers see each other's tags in status | yes | not yet run |
-| `NET_ADMIN` and `/dev/net/tun` | yes, `tailscale0` up with the tailnet IPv4 | not yet run |
-| socket shared to a second container; status and whois paths and headers | yes, as in section 2 | not yet run |
-| whois for the other node returns its tags | yes, `["tag:grange"]` | not yet run |
-| non-root caller can use status and whois | yes, uid 65534 | not yet run |
-| do tagged node keys expire | no: `Expiration N/A`, no `KeyExpiry` | not yet run |
+| registration with the tag; peers see each other's tags in status | yes | yes (CI, instance) |
+| `NET_ADMIN` and `/dev/net/tun` | yes, `tailscale0` up with the tailnet IPv4 | yes (CI, instance) |
+| socket shared to a second container; status and whois paths and headers | yes, as in section 2 | yes (CI: discovery and the identity check use both) |
+| whois for the other node returns its tags | yes, `["tag:grange"]` | yes (CI: tagged peers accepted, the untagged device refused with 403) |
+| non-root caller can use status and whois | yes, uid 65534 | yes, uid 10001 (CI, instance) |
+| do tagged node keys expire | no: `Expiration N/A`, no `KeyExpiry` | no: no `KeyExpiry` (instance) |
 | pre-auth key expiry | the default is 1 hour; `--expiration` sets it | (server-side, same) |
 | expiring the key leaves joined nodes working | yes, also across a sidecar restart; new devices refused | not yet run |
 | deleting a node cuts it off | yes, within 2 s; its sidecar exits | not yet run |
-| binding to the tailnet IPv4 in the shared namespace | yes | not yet run |
-| published port reaches the grange from host loopback | yes | not yet run |
-| gossip port unreachable from host and bridge network | yes: refused on the bridge address, no route to the tailnet address | not yet run |
-| ACL allows only the gossip port between tagged nodes | yes: 7789 connects, 8000 times out | not yet run |
+| binding to the tailnet IPv4 in the shared namespace | yes | yes (CI) |
+| published port reaches the grange from host loopback | yes | yes (instance) |
+| gossip port unreachable from host and bridge network | yes: refused on the bridge address, no route to the tailnet address | unreachable on the bridge address (CI); host not checked |
+| ACL allows only the gossip port between tagged nodes | yes: 7789 connects, 8000 times out | yes: 7789 connects; 8080, 7788 and 22 time out (instance, team server) |
 | online hint after a sidecar stops or is killed | offline after 12 s; back 2 to 3 s after a restart | not yet run |
 | online hint after a sidecar is paused | still online after 30 minutes; see below | not yet run |
 | monotonic clock across `docker pause` | gap shown: 12.1 s, same as the wall clock | not yet run |
-| monotonic clock across a machine sleep or suspend | not measured; timed in the phase 8 smoke test | not yet run |
+| monotonic clock across a machine sleep or suspend | stood still: no gap across a 2 min 14 s sleep (smoke test, below) | not applicable to a cloud instance; not yet run on a Linux laptop |
 | headscale stopped: joined granges keep gossiping | yes, changes still arrive at once | not yet run |
 | headscale stopped: daemon answers status and whois | yes, and still reports peers online | not yet run |
 | headscale stopped: a sidecar restarts | it gets no network map and stays unhealthy; see below | not yet run |
+
+"CI" is the `make test-headscale` job on GitHub's `ubuntu-24.04` runners, a
+required job on every push since 2026-11-19. "Instance" is a throwaway
+Lightsail instance, Ubuntu 24.04 with Docker Engine 29.10.0, joined to the
+team server for the smoke test.
 
 Sidecar integration (plan 5.2), on the same stack and the same runtime:
 
@@ -183,9 +188,9 @@ Sidecar integration (plan 5.2), on the same stack and the same runtime:
   override, went from `make up` with a filled `.env` to both containers
   healthy in 7 s, with no browser and no approval (R8.3, R8.4).
 
-The Linux column is deferred by Don's decision of 2026-11-18. The checks
-above are to be repeated on Docker Engine on Linux before the smoke test, and
-`make test-headscale` covers most of them automatically.
+The Linux column was deferred by Don's decision of 2026-11-18 and filled in
+on 2026-11-19 from CI and the smoke test's instance. The rows still marked
+"not yet run" need a Linux machine run by hand.
 
 ### Points for Don
 
@@ -211,3 +216,43 @@ above are to be repeated on Docker Engine on Linux before the smoke test, and
   60 seconds at startup step 3 and then refuses, and with no restart policy
   it stays down until `make up`. If headscale came back within the 60
   seconds, the grange started normally six seconds later.
+
+## 4. Smoke test (plan phase 8, step 1)
+
+Run on 2026-11-19 against the team's headscale server (0.29.7, the
+grange-only policy of section 1): Don's Mac with Docker Desktop, and the
+Linux instance above, both built from `3f4d4a6`. No agent-farm ran on either
+side; `PUT /v1/farm` with `curl` stood in for it, so both records showed
+`farm_stale: true` between pushes, as expected. The two sidecars connected
+through the server's embedded relay, not directly.
+
+| check | result | bound |
+|---|---|---|
+| each board lists the other grange | yes | `DISCOVERY_SECONDS` |
+| a change on the instance reaches the Mac | within 2 s | 5 s (R6.14) |
+| a change on the Mac reaches the instance | 0.2 s | 5 s (R6.14) |
+| the Mac sleeps 2 min 14 s: gone from the instance's board | 57 s after the sleep began | about 60 s (R6.4) |
+| the Mac wakes: back on the instance's board | 3.3 s after the wake | about 13 s (4.3 step 8, under ten minutes) |
+| a sleep longer than `FORGET_SECONDS` | not run; see below | about 3 s (4.3 step 8) |
+| rejected counts and `duplicate_id` | all 0, false | |
+
+What it showed:
+
+- **Docker Desktop's clock stands still across a Mac sleep.** The grange
+  logged no resume and its own board kept its picture, which is the "stopwatch
+  stood still" case of 4.3 step 8. A long-poll that began just before the
+  sleep answered 27 s after the wake: about 30 s had passed inside the VM
+  over 161 s of real time.
+- **A docked Mac may not stay asleep.** On AC power with USB devices
+  attached, a second, 13-minute sleep was real for only 111 s. macOS then
+  woke in the background for about 10 s in every 18 (`DarkWake`, from
+  `USB2_wake` with `TCPKeepAlive=active`) until the user woke it. The grange
+  gossiped in each of those wakes, so the Mac dropped off the instance's
+  board once, came back 5.8 s after the first background wake, and then
+  stayed listed with its lid closed. That is why the sleep past
+  `FORGET_SECONDS` was not run; the replay of 4.3 step 8 in
+  `docker/tests/test_example_43.py` covers it.
+- **DNS fails inside the container during those background wakes.** The
+  freshness re-check could not resolve `api.github.com` twice and kept its
+  previous state, as it does for any transient error; it polled normally
+  after the wake. Gossip uses addresses only and was unaffected.
