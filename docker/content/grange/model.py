@@ -66,7 +66,11 @@ def json_size(obj) -> int:
 def _string(value, what: str) -> str:
     if not isinstance(value, str):
         raise bad(f"{what} must be a string")
-    if len(value.encode("utf-8")) > MAX_STRING_BYTES:
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:              # a lone surrogate, which JSON can spell as \ud800
+        raise bad(f"{what} is not valid Unicode") from None
+    if size > MAX_STRING_BYTES:
         raise too_big(f"{what} is longer than {MAX_STRING_BYTES} bytes")
     return value
 

@@ -1,6 +1,7 @@
 """The gossip core, the gossip endpoint, and the HTTP runtime (plan phase 3)."""
 from __future__ import annotations
 
+import json
 import random
 import threading
 import time
@@ -278,6 +279,16 @@ class GossipEndpointTest(unittest.TestCase):
         self.assertEqual(self.app.handle("100.64.0.2", self.raw(big))[0], 413)
         self.assertEqual(self.app.handle("100.64.0.2", b" " * ((1 << 20) + 1))[0], 413)
         self.assertEqual(self.stats.rejected["overflow"], 2)
+
+    def test_lone_surrogate_is_400(self):
+        push = self.peer.push_message([self.peer.own_body()]).to_json()
+        push["records"][0]["agents"] = [{"owner": "bob", "name": "\ud800", "state": "busy"}]
+        repair = self.peer.repair_request().to_json()
+        repair["digest"]["eve\udc80"] = [1, 1, 1, None]
+        for msg in (push, repair):
+            raw = json.dumps(msg).encode()               # ensure_ascii spells it \ud800
+            self.assertEqual(self.app.handle("100.64.0.2", raw)[0], 400)
+        self.assertIsNone(self.store.body("bob"))
 
     def test_repair_with_records_is_400(self):
         msg = self.peer.repair_request().to_json()

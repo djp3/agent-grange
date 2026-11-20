@@ -69,6 +69,13 @@ class LocalApiTest(unittest.TestCase):
             self.assertEqual(status, 400, raw)
             self.assertIn("error", body)
 
+    def test_lone_surrogate_push_is_400_and_the_server_carries_on(self):
+        raw = b'{"agents":[{"owner":"djp3","name":"\\ud800","state":"busy"}]}'
+        status, body = self.request("PUT", "/v1/farm", raw=raw)
+        self.assertEqual(status, 400)
+        self.assertIn("not valid Unicode", body["error"])
+        self.assertEqual(self.request("GET", "/health")[0], 200)
+
     def test_oversize_push_is_413(self):
         too_many = [{"owner": "o", "name": f"n{i}", "state": "s"} for i in range(201)]
         self.assertEqual(self.push(too_many)[0], 413)
