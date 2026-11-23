@@ -8,14 +8,51 @@
 #              published (R3.4).
 #   grange     shares the sidecar's network namespace and reads its daemon
 #              socket for discovery and identity checks (R6.8, R5.13).
+#   check      a one-shot run of the grange's configuration check. The sidecar
+#              starts only after it exits 0, so an id the grange would refuse
+#              never reaches the control server as a hostname (R8.1).
 #
-# No restart policy on either service: after a reboot or a Docker restart the
+# No restart policy on any service: after a reboot or a Docker restart the
 # grange stays down until `make up` (R8.9).
 name: agent-grange
 
+# Grange keys from .env (section 7), shared by check and grange. Empty means
+# the default, which lives in content/grange/config.py and is not repeated here.
+x-grange-keys: &grange-keys
+  GRANGE_ID: ${GRANGE_ID:-}
+  GRANGE_GOSSIP_PORT: ${GRANGE_GOSSIP_PORT:-}
+  GRANGE_GROUP: ${GRANGE_GROUP:-}
+  TS_TAG: ${TS_TAG:-}
+  GRANGE_PEERS: ${GRANGE_PEERS:-}
+  HEARTBEAT_SECONDS: ${HEARTBEAT_SECONDS:-}
+  FARM_STALE_SECONDS: ${FARM_STALE_SECONDS:-}
+  EXPIRE_SECONDS: ${EXPIRE_SECONDS:-}
+  FORGET_SECONDS: ${FORGET_SECONDS:-}
+  REPAIR_SECONDS: ${REPAIR_SECONDS:-}
+  DISCOVERY_SECONDS: ${DISCOVERY_SECONDS:-}
+  FANOUT: ${FANOUT:-}
+  CONNECT_TIMEOUT_SECONDS: ${CONNECT_TIMEOUT_SECONDS:-}
+  EXCHANGE_TIMEOUT_SECONDS: ${EXCHANGE_TIMEOUT_SECONDS:-}
+
 services:
+  check:
+    # The image the grange service builds; compose builds it before starting
+    # anything. Never pulled: there is nothing to pull, and on a first `make up`
+    # the attempt prints a "pull access denied" that looks like a failure.
+    image: agent-grange:local
+    pull_policy: never
+    # The configuration check only: the freshness check is the grange's own (6.1 step 1).
+    entrypoint: ["python3", "/app/check_config.py"]
+    network_mode: none
+    labels:
+      agent-grange.service: check
+    environment: *grange-keys
+
   tailscale:
     image: tailscale/tailscale:v1.104.7
+    depends_on:
+      check:
+        condition: service_completed_successfully
     hostname: grange-${GRANGE_ID:-unset}
     cap_add: [NET_ADMIN]
     devices: ["/dev/net/tun:/dev/net/tun"]
@@ -70,22 +107,7 @@ services:
     labels:
       agent-grange.service: grange
     environment:
-      # Grange keys from .env (section 7). Empty means the default, which lives
-      # in content/grange/config.py and is not repeated here.
-      GRANGE_ID: ${GRANGE_ID:-}
-      GRANGE_GOSSIP_PORT: ${GRANGE_GOSSIP_PORT:-}
-      GRANGE_GROUP: ${GRANGE_GROUP:-}
-      TS_TAG: ${TS_TAG:-}
-      GRANGE_PEERS: ${GRANGE_PEERS:-}
-      HEARTBEAT_SECONDS: ${HEARTBEAT_SECONDS:-}
-      FARM_STALE_SECONDS: ${FARM_STALE_SECONDS:-}
-      EXPIRE_SECONDS: ${EXPIRE_SECONDS:-}
-      FORGET_SECONDS: ${FORGET_SECONDS:-}
-      REPAIR_SECONDS: ${REPAIR_SECONDS:-}
-      DISCOVERY_SECONDS: ${DISCOVERY_SECONDS:-}
-      FANOUT: ${FANOUT:-}
-      CONNECT_TIMEOUT_SECONDS: ${CONNECT_TIMEOUT_SECONDS:-}
-      EXCHANGE_TIMEOUT_SECONDS: ${EXCHANGE_TIMEOUT_SECONDS:-}
+      <<: *grange-keys
 
       # needed for private repos
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}

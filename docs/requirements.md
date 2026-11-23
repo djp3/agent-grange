@@ -71,7 +71,8 @@ no history, makes no decisions about pull requests, and stores nothing on disk.
   is 100 granges. Typical load is up to about 10 agents per grange.
 - **R3.2** A grange is one docker compose project with two containers: a
   Tailscale client sidecar and the grange itself. The grange container shares
-  the sidecar's network namespace.
+  the sidecar's network namespace. A one-shot configuration check runs before
+  either starts (R8.1).
 - **R3.3** Farm and frolic reach grange only on localhost, on a fixed port that
   compose publishes to `127.0.0.1` and that is set in `.env`.
 - **R3.4** Granges reach each other only over the tailnet, through the sidecar.
@@ -521,7 +522,8 @@ as the sender holds it at that moment.
 1. Freshness check against the kill-switch tag, exactly as built. A stale or
    unverifiable image refuses to start.
 2. Read configuration (section 7). A missing or invalid `GRANGE_ID` refuses to
-   start.
+   start. Compose also runs this check on its own, before the sidecar starts
+   (R8.1).
 3. Wait for the sidecar to report a tailnet IPv4 address, up to 60 seconds,
    then refuse to start. Plain mode skips this step (R6.9).
 4. Bind the local API to loopback and the container's bridge address. Bind the
@@ -810,7 +812,9 @@ into the image and never committed.
 
 An empty value means the default. `GRANGE_ID` is 1 to 56 characters from
 lowercase letters, digits, and hyphens, and neither starts nor ends with a
-hyphen, so that `grange-<GRANGE_ID>` is a valid hostname (R8.1).
+hyphen, so that `grange-<GRANGE_ID>` is a valid hostname (R8.1). The rule
+holds for the sidecar's hostname as well as for the grange: an id that breaks
+it stops the deployment before the sidecar joins the tailnet.
 
 Three keys must be equal on every grange in a mesh: `GRANGE_GOSSIP_PORT`,
 because peers are dialled on the local value and the ACL names it,
@@ -828,7 +832,8 @@ grange port. What farm reports is farm's concern (R5.4).
 
 ## 8. Deployment
 
-- **R8.1** `docker-compose.yml` defines two services in project `agent-grange`.
+- **R8.1** `docker-compose.yml` defines two services in project `agent-grange`,
+  and the one-shot `check` described at the end of this item.
   `tailscale` runs the official Tailscale client image, pinned, with `NET_ADMIN`
   and `/dev/net/tun`, a named volume for its state so the device identity
   survives restarts, a hostname of `grange-<GRANGE_ID>`, the login server and
@@ -841,7 +846,13 @@ grange port. What farm reports is farm's concern (R5.4).
   after the sidecar is healthy, carries the label
   `agent-grange.service=grange`, mounts the sidecar's daemon socket, and has
   a healthcheck start period of at least 75 seconds to cover the tailnet
-  wait.
+  wait. `check` runs the configuration check of 6.1 step 2 from the grange
+  image, on the values from `.env` as given, with no network and no freshness
+  check; an id with spaces around it is refused there, not stripped, since
+  the hostname would carry them. `tailscale` starts only after `check` exits
+  0, so a `GRANGE_ID` the grange would refuse never reaches the control
+  server as a device name. When `check` or `grange` refuses, `make up` shows
+  the reason from its log.
 - **R8.2** The grange image stays `python:3.12-slim` with the standard library
   only. Any dependency needs a stated reason.
 - **R8.3** Makefile targets: `make up`, `make down`, `make update`, `make logs`
@@ -875,7 +886,7 @@ grange port. What farm reports is farm's concern (R5.4).
   The harness drivers in `tools/` run on the host, because they drive Docker,
   so `make test-plain` and `make test-headscale` need a host Python 3.9 or
   later; the drivers use the standard library only.
-- **R8.9** No automatic restart. Compose sets no restart policy on either
+- **R8.9** No automatic restart. Compose sets no restart policy on any
   service. After a reboot or a restart of Docker the grange stays down until
   the developer runs `make up`.
 
@@ -1142,3 +1153,10 @@ grange port. What farm reports is farm's concern (R5.4).
   applies: only while peers still remember the grange's version. CI runs
   `make test-headscale` as a fourth required job (R8.8): Don approved that
   once it had passed on the hosted runner twice.
+- **2026-11-23, the id checked before the sidecar joins.** A teammate's first
+  `.env` set a `GRANGE_ID` with a capital letter. The grange refused it, as
+  section 7 says, but the sidecar had already joined the tailnet with that
+  id in its hostname: it starts first, and nothing checked the id for it. At
+  Don's request the rule now holds for both. R8.1 adds the one-shot `check`
+  service, which the sidecar waits for; 6.1 step 2 and section 7 say so. The
+  rule itself is unchanged.

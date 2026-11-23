@@ -1,7 +1,14 @@
 """Configuration (section 7, startup step 2)."""
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
-from grange.config import Config, ConfigError, parse_peers
+import grange
+from grange.config import EX_CONFIG, Config, ConfigError, parse_peers
+
+CHECK = Path(grange.__file__).resolve().parent.parent / "check_config.py"
 
 
 class DefaultsTest(unittest.TestCase):
@@ -67,6 +74,40 @@ class BadValuesTest(unittest.TestCase):
                            ("DISCOVERY_SECONDS", "soon")):
             with self.assertRaises(ConfigError, msg=f"{key}={value}"):
                 Config.from_env({"GRANGE_ID": "djp3", key: value})
+
+
+class CheckScriptTest(unittest.TestCase):
+    """check_config.py, which compose runs before the sidecar starts (R8.1)."""
+
+    def run_check(self, **env):
+        clean = {k: v for k, v in os.environ.items() if k not in ("GRANGE_ID", "FANOUT")}
+        return subprocess.run([sys.executable, str(CHECK)], env={**clean, **env},
+                              capture_output=True, text=True, timeout=10)
+
+    def test_valid_id_passes(self):
+        done = self.run_check(GRANGE_ID="carol")
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "configuration ok: GRANGE_ID=carol"))
+
+    def test_capital_letter_refuses_with_the_reason(self):
+        done = self.run_check(GRANGE_ID="Carol")
+        self.assertEqual(done.returncode, EX_CONFIG)
+        self.assertIn("REFUSING TO START: GRANGE_ID='Carol' is invalid", done.stderr)
+
+    def test_missing_id_refuses(self):
+        done = self.run_check()
+        self.assertEqual(done.returncode, EX_CONFIG)
+        self.assertIn("GRANGE_ID is not set", done.stderr)
+
+    def test_spaces_around_the_id_refuse(self):
+        """The grange strips them, but the sidecar's hostname would carry them."""
+        done = self.run_check(GRANGE_ID=" carol")
+        self.assertEqual(done.returncode, EX_CONFIG)
+        self.assertIn("GRANGE_ID=' carol' is invalid", done.stderr)
+
+    def test_other_keys_are_checked_too(self):
+        done = self.run_check(GRANGE_ID="carol", FANOUT="0")
+        self.assertEqual(done.returncode, EX_CONFIG)
+        self.assertIn("FANOUT=0", done.stderr)
 
 
 if __name__ == "__main__":

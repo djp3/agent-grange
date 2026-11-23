@@ -48,8 +48,10 @@ git-status:
 	@echo "  token        $(if $(GITHUB_TOKEN),set,unset)"
 	@echo "----------------------------------------"
 
+# When the check or the grange refuses, compose reports only the exit code; the
+# reason is in that container's log, so show it.
 up: git-status      ## build if needed, start, wait for healthy
-	docker compose up -d --build --wait
+	docker compose up -d --build --wait || { docker compose logs --no-log-prefix --tail 15 check grange; exit 1; }
 build: git-status   ## build the image only
 	docker compose build
 down: git-status

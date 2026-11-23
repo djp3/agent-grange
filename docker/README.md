@@ -32,8 +32,10 @@ make up
 
 `GRANGE_ID` is your id on every board: 1 to 56 lowercase letters, digits, or
 hyphens, not starting or ending with a hyphen. `make up` builds the image,
-starts the sidecar, which joins the tailnet with the key (no browser, no
-approval), then the grange, and waits until both are healthy. Other granges
+checks `.env`, starts the sidecar, which joins the tailnet with the key (no
+browser, no approval), then the grange, and waits until both are healthy. An
+id outside that rule, or any other bad value, stops `make up` before the
+sidecar joins, with the reason; fix `.env` and run `make up` again. Other granges
 find you by the tag within 30 seconds; you see them within a few.
 
 **After a reboot, or a restart of Docker, the grange does not come back by
@@ -42,12 +44,12 @@ itself** (R8.9). Run `make up` again.
 ## Make targets
 
 ```bash
-make up            # build if needed, start both containers, wait for healthy
+make up            # build if needed, check .env, start both containers, wait for healthy
 make down          # stop; a leaving record tells the mesh at once
 make update        # git pull --ff-only, then make up: the fix when the image is stale
 make logs          # follow the grange's log
 make info          # the git summary the build would bake in
-make ps            # both containers' status
+make ps            # both containers' status, and the check's exit code
 make test          # unit tests and a short simulation, inside the built image
 make test-host     # the same unit tests on your own Python, a fast loop
 make test-sim      # the hour-long simulations at 100 granges, about 10 minutes

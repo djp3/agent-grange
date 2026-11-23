@@ -14,7 +14,7 @@ class LayoutTest(unittest.TestCase):
     def test_entry_scripts_are_present(self):
         # Present, not imported: healthcheck.py makes a request and entrypoint.py
         # execs a command as soon as they run.
-        for name in ("entrypoint", "healthcheck", "server"):
+        for name in ("check_config", "entrypoint", "healthcheck", "server"):
             self.assertIsNotNone(importlib.util.find_spec(name), name)
 
 
