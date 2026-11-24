@@ -4,3 +4,5 @@ __pycache__/
 .env.*
 !.env.example
 .DS_Store
+security-surface.html
+security-surface.pdf
