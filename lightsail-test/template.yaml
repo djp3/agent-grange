@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  One throwaway agent-grange on a Lightsail instance, for checking that a
+  local grange can reach a remote one over the tailnet. First boot installs
+  Docker Engine and clones the repository. The grange is started afterwards
+  over SSH by grange-test.sh, so the join key never passes through
+  CloudFormation.
+
+Parameters:
+  InstanceName:
+    Type: String
+    Default: grange-test
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,253}[A-Za-z0-9]$"
+  BlueprintId:
+    Type: String
+    Default: ubuntu_24_04
+    Description: Lightsail image. The first-boot script expects Ubuntu.
+  BundleId:
+    Type: String
+    Default: micro_3_0
+    Description: Lightsail plan. micro_3_0 is 1 GB of memory and 2 vCPUs.
+  GitRepo:
+    Type: String
+    Description: HTTPS clone URL of agent-grange. The repository must be public.
+    AllowedPattern: "^https://[A-Za-z0-9._/-]+$"
+  GitRef:
+    Type: String
+    Default: develop
+    Description: Branch, tag or commit to check out.
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+  SshCidr:
+    Type: String
+    Description: IPv4 range allowed to reach SSH, for example 203.0.113.7/32.
+    AllowedPattern: "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$"
+  Owner:
+    Type: String
+    Description: Value of the instance's Owner tag. grange-test.sh passes the local username.
+    AllowedPattern: "^[A-Za-z0-9 ._:/=+@-]{1,256}$"
+
+Resources:
+  Instance:
+    Type: AWS::Lightsail::Instance
+    Properties:
+      InstanceName: !Ref InstanceName
+      BlueprintId: !Ref BlueprintId
+      BundleId: !Ref BundleId
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Project
+          Value: grange-test
+      Networking:
+        # SSH is the only inbound port. The grange's API is published on the
+        # instance's loopback only, and gossip lives on the tailnet interface
+        # inside the sidecar container, so neither is opened here.
+        Ports:
+          - Protocol: tcp
+            FromPort: 22
+            ToPort: 22
+            Cidrs:
+              - !Ref SshCidr
+            # Also allow the SSH client in the Lightsail console.
+            CidrListAliases:
+              - lightsail-connect
+      UserData:
+        Fn::Join:
+          - "\n"
+          - - "#!/bin/sh"
+            - !Sub "GIT_REPO='${GitRepo}'"
+            - !Sub "GIT_REF='${GitRef}'"
+            # Everything below is literal: CloudFormation substitutes nothing in
+            # it. Lightsail runs launch scripts with sh, so the real work is
+            # written to a file and run with bash.
+            - |
+              mkdir -p /opt/grange-test
+              cat > /opt/grange-test/bootstrap.sh <<'BOOTSTRAP'
+              #!/bin/bash
+              # First boot of the grange test instance: Docker Engine from
+              # Docker's own apt repository, then a full clone of agent-grange
+              # (the Makefile reads the git history). The grange is not started
+              # here: it needs a .env, which arrives later over SSH.
+              set -euxo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              # Wait for the lock: Ubuntu may be running its own first-boot updates.
+              apt_get() { apt-get -o DPkg::Lock::Timeout=300 "$@"; }
+
+              apt_get update
+              apt_get install -y ca-certificates curl git make
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+              chmod a+r /etc/apt/keyrings/docker.asc
+              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+                > /etc/apt/sources.list.d/docker.list
+              apt_get update
+              apt_get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              systemctl enable --now docker
+
+              # The Tailscale sidecar needs the tun device.
+              modprobe tun || true
+              test -c /dev/net/tun
+
+              git clone "$GIT_REPO" /opt/agent-grange
+              git -C /opt/agent-grange checkout "$GIT_REF"
+
+              docker version
+              docker compose version
+              BOOTSTRAP
+              if GIT_REPO="$GIT_REPO" GIT_REF="$GIT_REF" bash /opt/grange-test/bootstrap.sh > /var/log/grange-test-bootstrap.log 2>&1; then
+                touch /opt/grange-test/ready
+              else
+                touch /opt/grange-test/failed
+              fi
+
+Outputs:
+  InstanceName:
+    Value: !Ref Instance
+  PublicIp:
+    Value: !GetAtt Instance.PublicIpAddress
